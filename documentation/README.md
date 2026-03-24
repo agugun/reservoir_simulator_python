@@ -11,7 +11,7 @@ This simulator achieves **industrial mathematical and binary parity** with legac
 Please navigate the structural modules below to explore the theoretical mechanics, mathematical execution, and architectural domains driving the system.
 
 ### 1. Philosophy & Code Architecture
-* **[Engineering Philosophy & Domain Modeling](00_engineering_philosophy.md)**: Details the conceptual mapping between physical geology, structural petrophysics, thermodynamic fluid constraints, and their isolated Object-Oriented class boundaries globally. Includes the complete system Mermaid UML diagram.
+* **[Software Engineering & Domain Modeling](00_software_engineering.md)**: Details the conceptual mapping between physical geology, structural petrophysics, thermodynamic fluid constraints, and their isolated Object-Oriented class boundaries globally. Includes the complete system Mermaid UML diagram.
 * **[Simulator Software Architecture](04_simulator_architecture.md)**: Summarizes the decoupled software pipeline flowing from Eclipse legacy deck ingestion, through internal numerical computations, and concluding with standardized exact binary and generic ASCII reporting pipelines (`.INIT`, `.UNRST`, `.PRT`, `.DBG`).
 
 ### 2. Core Reservoir Physics

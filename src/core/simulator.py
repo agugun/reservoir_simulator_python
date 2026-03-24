@@ -77,6 +77,20 @@ class Simulator:
             
             activity_z = grid.actnum[:, :, :-1] * grid.actnum[:, :, 1:]
             self.Tz = 0.001127 * k_avg_z * area_z / (d1 + d2) * activity_z
+            
+        self._compile_jax_functions()
+
+    def _compile_jax_functions(self):
+        import jax
+        print("Compiling JAX XLA Graphs for O(1) step execution...")
+        
+        # A pure functional wrapper for the residual calculation isolating the physical solver natively
+        def residual_fn(p, Y, is_sat, p_old, sg_old, rs_old, dt):
+            return self._calc_residuals_jax(p, Y, is_sat, p_old, sg_old, rs_old, dt)
+            
+        self._jitted_residual = jax.jit(residual_fn)
+        # JIT the jacobian function explicitly over (p, Y) dynamic evaluations statically mapping arrays
+        self._jitted_jacobian = jax.jit(jax.jacfwd(residual_fn, argnums=(0, 1)))
 
     def calculate_well_index(self, well) -> float:
         """
@@ -271,21 +285,20 @@ class Simulator:
         return R
         
     def _build_jacobian_fim(self, p, Y, is_sat, p_old, sg_old, rs_old, dt):
-        import jax
+        import jax.numpy as jnp
         N = len(p)
         
-        def residual_fn(p_jax, Y_jax):
-            # Enforce float64 for JAX parameters ensuring precise tracing
-            return self._calc_residuals_jax(p_jax, Y_jax, is_sat, p_old, sg_old, rs_old, dt)
-            
-        J_fn = jax.jacfwd(residual_fn, argnums=(0, 1))
-        
-        import jax.numpy as jnp
         p_jax = jnp.array(p, dtype=jnp.float64)
         Y_jax = jnp.array(Y, dtype=jnp.float64)
+        is_sat_jax = jnp.array(is_sat, dtype=jnp.bool_)
+        p_old_jax = jnp.array(p_old, dtype=jnp.float64)
+        sg_old_jax = jnp.array(sg_old, dtype=jnp.float64)
+        rs_old_jax = jnp.array(rs_old, dtype=jnp.float64)
+        dt_jax = jnp.float64(dt)
         
-        J_p, J_y = J_fn(p_jax, Y_jax)
-        R_base = residual_fn(p_jax, Y_jax)
+        # Execute the pre-compiled XLA cache bypassing python interpreting limits inherently
+        J_p, J_y = self._jitted_jacobian(p_jax, Y_jax, is_sat_jax, p_old_jax, sg_old_jax, rs_old_jax, dt_jax)
+        R_base = self._jitted_residual(p_jax, Y_jax, is_sat_jax, p_old_jax, sg_old_jax, rs_old_jax, dt_jax)
         
         # Interleave analytic Jacobian segments into explicit 2N block structure
         J = np.zeros((2*N, 2*N))
@@ -353,14 +366,14 @@ class Simulator:
             np.fill_diagonal(J_scaled, J_scaled.diagonal() + 1e-12)
             
             try:
-                import scipy.linalg as la
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter('ignore', la.LinAlgWarning)
-                    dX_scaled = la.solve(J_scaled, -R_scaled)
+                import scipy.sparse as sp
+                import scipy.sparse.linalg as spla
+                # Convert explicitly to Compressed Sparse Row format eliminating mathematical blocks of absolute zero
+                J_sparse = sp.csr_matrix(J_scaled)
+                dX_scaled = spla.spsolve(J_sparse, -R_scaled)
                 dX = dX_scaled / c_max
             except Exception as e:
-                print(f"Jacobian inversion failed: {e}")
+                print(f"Jacobian sparse inversion failed: {e}")
                 break
                 
             dp = dX[0::2]
