@@ -1,0 +1,208 @@
+Parameter 'OutputDir' is missing a value.  Please use --output-dir=value.
+
+Usage: /usr/bin/flow [OPTIONS] [ECL_DECK_FILENAME]
+Flow, an advanced reservoir simulator for ECL-decks provided by the Open Porous Media project.
+
+Recognized options:
+    -h,--help                                     Print this help message and exit
+    --help-all                                    Print all parameters, including obsolete, hidden and deprecated ones.
+    --accelerator-mode=STRING                     Choose a linear solver, usage: '--accelerator-mode=[none|cusparse|opencl|amgcl|rocalution|rocsparse]'. Default: "none"
+    --action-parsing-strictness=STRING            Set strictness of parsing process for ActionX and PyAction. Available options are normal (do not apply keywords that have not been tested for ActionX or PyAction) and low (try to apply all keywords, beware: the simulation outcome might be incorrect). Default: "normal"
+    --add-corners=BOOLEAN                         Add corners to partition. Default: false
+    --allow-distributed-wells=BOOLEAN             Allow the perforations of a well to be distributed to interior of multiple processes. Default: false
+    --allow-splitting-inactive-wells=BOOLEAN      Allow inactive (never non-shut) wells to be split across multiple domains. Default: true
+    --alternative-well-rate-init=BOOLEAN          Use alternative well rate initialization procedure. Default: true
+    --check-group-constraints-inner-well-iterations=BOOLEAN  Allow checking of group constraints during inner well iterations. Default: true
+    --check-satfunc-consistency=BOOLEAN           Whether or not to check saturation function consistency requirements. Default: true
+    --continue-on-convergence-error=BOOLEAN       Continue with a non-converged solution instead of giving up if we encounter a time step size smaller than the minimum time step size. Default: false
+    --convergence-monitoring=BOOLEAN              Enable convergence monitoring. Default: false
+    --convergence-monitoring-cut-off=INTEGER      Cut off limit for convergence monitoring. Default: 6
+    --convergence-monitoring-decay-factor=SCALAR  Decay factor for convergence monitoring. Default: 0.75
+    --cpr-reuse-interval=INTEGER                  Reuse preconditioner interval. Used when CprReuseSetup is set to 4, then the preconditioner will be fully recreated instead of reused every N linear solve, where N is this parameter. Default: 30
+    --cpr-reuse-setup=INTEGER                     Reuse preconditioner setup. Valid options are 0: recreate the preconditioner for every linear solve, 1: recreate once every timestep, 2: recreate if last linear solve took more than 10 iterations, 3: never recreate, 4: recreated every CprReuseInterval. Default: 4
+    --cpr-weights-thread-parallel=BOOLEAN         Enable OpenMP thread parallelization of CPR weight calculation. This can improve performance for large models but is disabled by default.Usage: --cpr-weights-thread-parallel=[true|false]. . Default: false
+    --dbhp-max-rel=SCALAR                         Maximum relative change of the bottom-hole pressure in a single iteration. Default: 1
+    --debug-verbosity-level=INTEGER               Set debug verbosity level globally. Default is 1, increasing values give additional output and 0 disables most messages to the .DBG file. Default: 1
+    --dp-max-rel=SCALAR                           Maximum relative change of pressure in a single iteration. Default: 0.3
+    --ds-max=SCALAR                               Maximum absolute change of any saturation in a single iteration. Default: 0.2
+    --dwell-fraction-max=SCALAR                   Maximum absolute change of a well's volume fraction in a single iteration. Default: 0.2
+    --ecl-deck-file-name=STRING                   The name of the file which contains the ECL deck to be simulated. Default: ""
+    --ecl-output-double-precision=BOOLEAN         Tell the output writer to use double precision. Useful for 'perfect' restarts. Default: false
+    --ecl-output-interval=INTEGER                 The number of report steps that ought to be skipped between two writes of ECL results. Default: -1
+    --edge-conformal=BOOLEAN                      Edge conformal cornerpoint processing. Default: false
+    --edge-weights-method=STRING                  Choose edge-weighing strategy: 'uniform', 'transmissibility', or 'logtrans' (logarithm of transmissibility). Default: "transmissibility"
+    --enable-adaptive-time-stepping=BOOLEAN       Use adaptive time stepping between report steps. Default: true
+    --enable-async-ecl-output=BOOLEAN             Write the ECL-formated results in a non-blocking way (i.e., using a separate thread). Default: true
+    --enable-async-vtk-output=BOOLEAN             Dispatch a separate thread to write the VTK output. Default: true
+    --enable-drift-compensation=BOOLEAN           Enable partial compensation of systematic mass losses via the source term of the next time step. Default: false
+    --enable-dry-run=STRING                       Specify if the simulation ought to be actually run, or just pretended to be. Default: "auto"
+    --enable-ecl-output=BOOLEAN                   Write binary output which is compatible with the commercial Eclipse simulator. Default: true
+    --enable-esmry=BOOLEAN                        Write ESMRY file for fast loading of summary data. Default: false
+    --enable-logging-fallout-warning=BOOLEAN      Developer option to see whether logging was on non-root processors. In that case it will be appended to the *.DBG or *.PRT files. Default: false
+    --enable-opm-rst-file=BOOLEAN                 Include OPM-specific keywords in the ECL restart file to enable restart of OPM simulators from these files. Default: false
+    --enable-storage-cache=BOOLEAN                Store previous storage terms and avoid re-calculating them. Default: true
+    --enable-terminal-output=BOOLEAN              Print high-level information about the simulation's progress to the terminal. Default: true
+    --enable-tuning=BOOLEAN                       Honor some aspects of the TUNING keyword. Default: false
+    --enable-vtk-output=BOOLEAN                   Global switch for turning on writing VTK files. Default: false
+    --enable-well-operability-check=BOOLEAN       Enable the well operability checking. Default: true
+    --enable-well-operability-check-iter=BOOLEAN  Enable the well operability checking during iterations. Default: false
+    --enable-write-all-solutions=BOOLEAN          Write all solutions to disk instead of only the ones for the report steps. Default: false
+    --force-disable-fluid-in-place-output=BOOLEAN  Do not print fluid-in-place values after each report step even if requested by the deck. Default: false
+    --force-disable-resv-fluid-in-place-output=BOOLEAN  Do not print reservoir volumes values after each report step even if requested by the deck. Default: false
+    --full-time-step-initially=BOOLEAN            Always attempt to finish a report step using a single substep. Default: false
+    --gpu-aware-mpi=BOOLEAN                       MPI communication use GPU aware MPI in the sense that it will use GPU direct communication. Setting this to true  will require that the MPI implementation supports GPU direct communication. If you are unsure, set this to false. Usage: --gpu-aware-mpi=[true|false]. . Default: false
+    --gpu-device-id=INTEGER                       Choose device ID for cusparseSolver or openclSolver, use 'nvidia-smi' or 'clinfo' to determine valid IDs. Default: 0
+    --hy-ne-config-file=STRING                    Use config files for Hybrid Newton. Default: "hybridNewtonConfig.json"
+    --ignore-keywords=STRING                      List of Eclipse keywords which should be ignored. As a ':' separated string. Default: ""
+    --ilu-fillin-level=INTEGER                    The fill-in level of the linear solver's ILU preconditioner. Default: 0
+    --ilu-redblack=BOOLEAN                        Use red-black partitioning for the ILU preconditioner. Default: false
+    --ilu-relaxation=SCALAR                       The relaxation factor of the linear solver's ILU preconditioner. Default: 0.9
+    --ilu-reorder-spheres=BOOLEAN                 Whether to reorder the entries of the matrix in the red-black ILU preconditioner in spheres starting at an edge. If false the original ordering is preserved in each color. Otherwise why try to ensure D4 ordering (in a 2D structured grid, the diagonal elements are consecutive). Default: false
+    --imbalance-tol=SCALAR                        Tolerable imbalance of the loadbalancing. Default: 1.1
+    --initial-time-step-in-days=SCALAR            The size of the initial time step in days. Default: 1
+    --inj-mult-damp-mult=SCALAR                   Injection multiplier dampening factor (dampening multiplied by this each time oscillation is detected). Default: 0.9
+    --inj-mult-min-damp-factor=SCALAR             Minimum injection multiplier dampening factor (maximum dampening level). Default: 0.05
+    --inj-mult-osc-threshold=SCALAR               Injection multiplier oscillation threshold (used for multiplier dampening). Default: 0.1
+    --input-skip-mode=STRING                      Set compatibility mode for the SKIP100/SKIP300 keywords. Options are 100 (skip SKIP100..ENDSKIP, keep SKIP300..ENDSKIP) [default], 300 (skip SKIP300..ENDSKIP, keep SKIP100..ENDSKIP) and all (skip both SKIP100..ENDSKIP and SKIP300..ENDSKIP) . Default: "100"
+    --linear-solver=STRING                        Configuration of solver. Valid options are: cprw (default), ilu0, dilu, cpr (an alias for cprw), cpr_quasiimpes, cpr_trueimpes, cpr_trueimpesanalytic, amg or hybrid (experimental). Alternatively, you can request a configuration to be read from a JSON file by giving the filename here, ending with '.json.'. Default: "cprw"
+    --linear-solver-accelerator=STRING            Choose the backend for the linear solver, usage: '--linear-solver-accelerator=[cpu|gpu]'. Default: "cpu"
+    --linear-solver-ignore-convergence-failure=BOOLEAN  Continue with the simulation like nothing happened after the linear solver did not converge. Default: false
+    --linear-solver-max-iter=INTEGER              The maximum number of iterations of the linear solver. Default: 200
+    --linear-solver-print-json-definition=BOOLEAN  Write the JSON definition of the linear solver setup to the DBG file. Default: true
+    --linear-solver-reduction=SCALAR              The minimum reduction of the residual which the linear solver must achieve. Default: 0.01
+    --linear-solver-restart=INTEGER               The number of iterations after which GMRES is restarted. Default: 40
+    --linear-solver-verbosity=INTEGER             The verbosity level of the linear solver (0: off, 2: all). Default: 0
+    --load-step=INTEGER                           Load serialized state from .OPMRST file. Either a specific report step, or 0 to load last stored report step. Default: -1
+    --local-domains-ordering-measure=STRING       Subdomain ordering measure. Allowed values are 'maxpressure', 'averagepressure' and  'residual'. Default: "maxpressure"
+    --local-domains-partition-well-neighbor-levels=INTEGER  Number of neighbor levels around wells to include in the same domain during NLDD partitioning. Default: 1
+    --local-domains-partitioning-imbalance=SCALAR  Subdomain partitioning imbalance tolerance. 1.03 is 3 percent imbalance. Default: 1.03
+    --local-domains-partitioning-method=STRING    Subdomain partitioning method. Allowed values are 'zoltan', 'simple', and the name of a partition file ending with '.partition'. Default: "zoltan"
+    --local-solve-approach=STRING                 Choose local solve approach. Valid choices are jacobi and gauss-seidel. Default: "gauss-seidel"
+    --local-tolerance-scaling-cnv=SCALAR          Set lower than 1.0 to use stricter convergence tolerance for local solves. Default: 0.1
+    --local-tolerance-scaling-mb=SCALAR           Set lower than 1.0 to use stricter convergence tolerance for local solves. Default: 1
+    --local-well-solve-control-switching=BOOLEAN  Allow control switching during local well solutions. Default: true
+    --matrix-add-well-contributions=BOOLEAN       Explicitly specify the influences of wells between cells in the Jacobian and preconditioner matrices. Default: false
+    --max-inner-iter-ms-wells=INTEGER             Maximum number of inner iterations for multi-segment wells. Default: 100
+    --max-inner-iter-wells=INTEGER                Maximum number of inner iterations for standard wells. Default: 50
+    --max-local-solve-iterations=INTEGER          Max iterations for local solves with NLDD nonlinear solver. Default: 20
+    --max-newton-iterations-with-inner-well-iterations=INTEGER  Maximum newton iterations with inner well iterations. Default: 8
+    --max-pressure-change-ms-wells=SCALAR         Maximum relative pressure change for a single iteration of the multi-segment well model. Default: 1e+06
+    --max-residual-allowed=SCALAR                 Absolute maximum tolerated for residuals without cutting the time step size. Default: 1e+07
+    --max-single-precision-days=SCALAR            Maximum time step size where single precision floating point arithmetic can be used solving for the linear systems of equations. Default: 20
+    --max-temperature-change=SCALAR               Maximum absolute change of temperature in a single iteration. Default: 5
+    --max-well-status-switch-for-wells=INTEGER    Maximum number of status switching (stop<->open) for a well during a time-step. Default: 99
+    --max-well-status-switch-in-inner-iter-wells=INTEGER  Maximum number of status switching (stop<->open) for a well during inner iterations. Default: 99
+    --max-welleq-iter=INTEGER                     Maximum number of iterations to determine solution the well equations. Default: 30
+    --maximum-number-of-group-switches=INTEGER    Maximum number of times a group can switch to the same control. Default: 3
+    --maximum-number-of-well-switches=INTEGER     Maximum number of times a well can switch to the same control. Default: 3
+    --maximum-water-saturation=SCALAR             Maximum water saturation. Default: 1
+    --metis-params=STRING                         Configuration of Metis partitioner. You can request a configuration to be read from a JSON file by giving the filename here, with extension '.json'. See http://glaros.dtc.umn.edu/gkhome/fetch/sw/metis/manual.pdf for available METIS options. Default: "default"
+    --milu-variant=STRING                         Specify which variant of the modified-ILU preconditioner ought to be used. Possible variants are: ilu (default, plain ILU), milu_1 (lump diagonal with dropped row entries), milu_2 (lump diagonal with the sum of the absolute values of the dropped row entries), milu_3 (if diagonal is positive add sum of dropped row entries, otherwise subtract them), milu_4 (if diagonal is positive add sum of dropped row entries, otherwise do nothing). Default: "ilu"
+    --min-strict-cnv-iter=INTEGER                 Minimum number of Newton iterations before relaxed tolerances can be used for the CNV convergence criterion. Default: -1
+    --min-strict-mb-iter=INTEGER                  Minimum number of Newton iterations before relaxed tolerances can be used for the MB convergence criterion. Default -1 means that the relaxed tolerance is used when maximum number of Newton iterations are reached. Default: -1
+    --min-time-step-based-on-newton-iterations=SCALAR  The minimum time step size (in days for field and metric unit and hours for lab unit) can be reduced to based on newton iteration counts. Default: 0
+    --min-time-step-before-shutting-problematic-wells-in-days=SCALAR  The minimum time step size in days for which problematic wells are not shut. Default: 0.01
+    --network-max-outer-iterations=INTEGER        Maximum outer number of iterations in the network solver before giving up. Default: 10
+    --network-max-pressure-update-in-bars=SCALAR  Maximum pressure update in the inner network pressure update iterations. Default: 5
+    --network-max-strict-outer-iterations=INTEGER  Maximum outer iterations in network solver before relaxing tolerance. Default: 10
+    --network-max-sub-iterations=INTEGER          Maximum number of sub-iterations to update network pressures (within a single well/group control update). Default: 20
+    --network-pressure-update-damping-factor=SCALAR  Damping factor in the inner network pressure update iterations. Default: 0.1
+    --newton-max-iterations=INTEGER               The maximum number of Newton iterations per time step. Default: 20
+    --newton-max-relax=SCALAR                     The maximum relaxation factor of a Newton iteration. Default: 0.5
+    --newton-min-iterations=INTEGER               The minimum number of Newton iterations per time step. Default: 2
+    --newton-relaxation-type=STRING               The type of relaxation used by Newton method. Default: "dampen"
+    --nldd-local-linear-solver=STRING             Configuration of NLDD local linear solver. Valid options are: ilu0 (default), dilu, cpr_quasiimpes and amg. Alternatively, you can request a configuration to be read from a JSON file by giving the filename here, ending with '.json.'. Default: "ilu0"
+    --nldd-local-linear-solver-max-iter=INTEGER   The maximum number of iterations of the NLDD local linear solver. Default: 200
+    --nldd-local-linear-solver-reduction=SCALAR   The minimum reduction of the residual which the NLDD local linear solver must achieve. Default: 0.01
+    --nldd-num-initial-newton-iter=INTEGER        Number of initial global Newton iterations when running the NLDD nonlinear solver. Default: 1
+    --nldd-relative-mobility-change-tol=SCALAR    Threshold for single cell relative mobility change in the NLDD solver. Default: 0.1
+    --nonlinear-solver=STRING                     Choose nonlinear solver. Valid choices are newton or nldd. Default: "newton"
+    --num-local-domains=INTEGER                   Number of local domains for NLDD nonlinear solver. Default: 0
+    --num-overlap=INTEGER                         Numbers of layers overlap in parallel partition. Default: 1
+    --num-satfunc-consistency-sample-points=INTEGER  Maximum number of reported failures for each individual saturation function consistency check. Default: 5
+    --nupcol-group-rate-tolerance=SCALAR          Tolerance for acceptable changes in VREP/RAIN group rates. Default: 0.001
+    --opencl-ilu-parallel=BOOLEAN                 Parallelize ILU decomposition and application on GPU. Default: true
+    --opencl-platform-id=INTEGER                  Choose platform ID for openclSolver, use 'clinfo' to determine valid platform IDs. Default: 0
+    --output-dir=STRING                           The directory to which result files are written. Default: ""
+    --output-extra-convergence-info=STRING        Provide additional convergence output files for diagnostic purposes. "none" gives no extra output and overrides all other options, "steps" generates an INFOSTEP file, "iterations" generates an INFOITER file. Combine options with commas, e.g., "steps,iterations" for multiple outputs. Default: "none"
+    --output-interval=INTEGER                     Specify the number of report steps between two consecutive writes of restart data. Default: 1
+    --output-mode=STRING                          Specify which messages are going to be printed. Valid values are: none, log, all (default). Default: "all"
+    --owner-cells-first=BOOLEAN                   Order cells owned by rank before ghost/overlap cells. Default: true
+    --parameter-file=STRING                       An .ini file which contains a set of run-time parameters. Default: ""
+    --parsing-strictness=STRING                   Set strictness of parsing process. Available options are normal (stop for critical errors), high (stop for all errors) and low (as normal, except do not stop due to unsupported keywords even if marked critical. Default: "normal"
+    --partition-method=STRING                     Choose partitioning method: 'simple', 'zoltan', 'metis', or 'zoltanwell' (Zoltan with all cells perforated by a well represented by a single vertex). Default: "zoltanwell"
+    --pre-solve-network=BOOLEAN                   Pre solve and iterate the network model at start-up. Default: true
+    --pressure-max=SCALAR                         Maximum absolute pressure. Default: 1e+99
+    --pressure-min=SCALAR                         Minimum absolute pressure. Default: -1e+99
+    --pressure-scale=SCALAR                       Scaling of pressure primary variable. Default: 1
+    --pri-var-oscilation-threshold=SCALAR         The threshold value for the primary variable switching conditions after its meaning has switched to hinder oscillations. Default: 1e-05
+    --print-parameters=INTEGER                    Print the values of the run-time parameters at the start of the simulation. Default: 2
+    --project-saturations=BOOLEAN                 Option for doing saturation projection. Default: false
+    --regularization-factor-wells=SCALAR          Regularization factor for wells. Default: 100
+    --relaxed-linear-solver-reduction=SCALAR      The minimum reduction of the residual which the linear solver need to achieve for the solution to be accepted. Default: 0.01
+    --relaxed-max-pv-fraction=SCALAR              The fraction of the pore volume of the reservoir where the volumetric error (CNV) may be violated during strict Newton iterations. Default: 0.03
+    --relaxed-pressure-tol-msw=SCALAR             Relaxed tolerance for the MSW pressure solution. Default: 10000
+    --relaxed-well-flow-tol=SCALAR                Relaxed tolerance for the well flow residual. Default: 0.001
+    --save-step=STRING                            Save serialized state to .OPMRST file. Either a specific report step, "all" to save all report steps or ":x" to save every x'th step.Use negative values of "x" to keep only the last written step, or "last" to save every step, keeping only the last. Default: ""
+    --scale-linear-system=BOOLEAN                 Scale linear system according to equation scale and primary variable types. Default: false
+    --sched-restart=BOOLEAN                       When restarting: should we try to initialize wells and groups from historical SCHEDULE section. Default: false
+    --serial-partitioning=BOOLEAN                 Perform partitioning for parallel runs on a single process. Default: false
+    --shut-unsolvable-wells=BOOLEAN               Shut unsolvable wells. Default: true
+    --solve-welleq-initially=BOOLEAN              Fully solve the well equations before each iteration of the reservoir model. Default: true
+    --solver-continue-on-convergence-failure=BOOLEAN  Continue instead of stop when minimum solver time step is reached. Default: false
+    --solver-growth-factor=SCALAR                 The factor time steps are elongated after a successful substep. Default: 2
+    --solver-max-growth=SCALAR                    The maximum factor time steps are elongated after a report step. Default: 3
+    --solver-max-restarts=INTEGER                 The maximum number of breakdowns before a substep is given up and the simulator is terminated. Default: 10
+    --solver-max-time-step-in-days=SCALAR         The maximum size of a time step in days. Default: 365
+    --solver-min-time-step=SCALAR                 The minimum size of a time step in days for field and metric and hours for lab. If a step cannot converge without getting cut below this step size the simulator will stop. Default: 1e-12
+    --solver-restart-factor=SCALAR                The factor time steps are elongated after restarts. Default: 0.33
+    --solver-verbosity=INTEGER                    Specify the "chattiness" of the non-linear solver itself. Default: 1
+    --strict-inner-iter-wells=INTEGER             Number of inner well iterations with strict tolerance. Default: 40
+    --strict-outer-iter-wells=INTEGER             Number of newton iterations for which wells are checked with strict tolerance. Default: 6
+    --temperature-max=SCALAR                      Maximum absolute temperature. Default: 1e+09
+    --temperature-min=SCALAR                      Minimum absolute temperature. Default: 0
+    --threads-per-process=INTEGER                 The maximum number of threads to be instantiated per process ('-1' means 'automatic'). Default: 2
+    --time-step-after-event-in-days=SCALAR        Time step size of the first time step after an event occurs during the simulation in days. Default: -1
+    --time-step-control=STRING                    The algorithm used to determine time-step sizes. Valid options are: 'pid' (default), 'pid+iteration', 'pid+newtoniteration', 'iterationcount', 'newtoniterationcount' and 'hardcoded'. Default: "pid+newtoniteration"
+    --time-step-control-decay-damping-factor=SCALAR  The decay rate of the time step decrease when the target iterations is exceeded. Default: 1
+    --time-step-control-decay-rate=SCALAR         The decay rate of the time step size of the number of target iterations is exceeded. Default: 0.75
+    --time-step-control-file-name=STRING          The name of the file which contains the hardcoded time steps sizes. Default: "timesteps"
+    --time-step-control-growth-damping-factor=SCALAR  The growth rate of the time step increase when the target iterations is undercut. Default: 3.2
+    --time-step-control-growth-rate=SCALAR        The growth rate of the time step size of the number of target iterations is undercut. Default: 1.25
+    --time-step-control-max-reduction-time-step=SCALAR  (Only applicable for the general 3rd order controller, using 'control-error-filtering' as time-step-control-tolerance-test-version) If the (proposed) relative change in time step size is larger than this parameter, the time step will be rejected. Default: 0.1
+    --time-step-control-parameters=STRING         (Only applicable for the general 3rd order controller.) Parameters for the general 3rd order controller. Should be given as 'beta_1;beta_2;beta_3;alpha_2;alpha_3'. Default: "0.125;0.25;0.125;0.75;0.25"
+    --time-step-control-reject-completed-step=BOOLEAN  (Only applicable for the general 3rd order controller.) Include rejection of completed time steps if the relative change is larger than the time step control tolerance. Default: false
+    --time-step-control-safety-factor=SCALAR      Value to be multiplied with the time step control tolerance to ensure that the target relative change is lower than the tolerance. Default: 0.8
+    --time-step-control-target-iterations=INTEGER  The number of linear iterations which the time step control scheme should aim for (if applicable). Default: 30
+    --time-step-control-target-newton-iterations=INTEGER  The number of Newton iterations which the time step control scheme should aim for (if applicable). Default: 8
+    --time-step-control-tolerance=SCALAR          The tolerance used by the time step size control algorithm. Default: 0.1
+    --time-step-control-tolerance-test-version=STRING  (Only applicable for the general 3rd order controller.) Ways to decide if the time step should be rejected. Options: 'standard' and 'control-error-filtering'. The standard version compares relative change to tolerance directly to decide if the time step should be rejected, while the control-error-filtering version compares the relative change in time step size to the max-reduction-time-step parameter. Default: "standard"
+    --time-step-verbosity=INTEGER                 Specify the "chattiness" during the time integration. Default: 1
+    --tolerance-cnv=SCALAR                        Local convergence tolerance (Maximum of local saturation errors). Default: 0.01
+    --tolerance-cnv-energy=SCALAR                 Local energy convergence tolerance (Maximum of local energy errors). Default: 0.01
+    --tolerance-cnv-energy-relaxed=SCALAR         Relaxed local energy convergence tolerance that applies for iterations after the iterations with the strict tolerance. Default: 1
+    --tolerance-cnv-relaxed=SCALAR                Relaxed local convergence tolerance that applies for iterations after the iterations with the strict tolerance. Default: 1
+    --tolerance-energy-balance=SCALAR             Tolerated energy balance error relative to (scaled) total energy present. Default: 1e-07
+    --tolerance-energy-balance-relaxed=SCALAR     Relaxed tolerated energy balance error that applies for iterations after the iterations with the strict tolerance. Default: 1e-06
+    --tolerance-mb=SCALAR                         Tolerated mass balance error relative to total mass present. Default: 1e-07
+    --tolerance-mb-relaxed=SCALAR                 Relaxed tolerated mass balance error that applies for iterations after the iterations with the strict tolerance. Default: 1e-06
+    --tolerance-pressure-ms-wells=SCALAR          Tolerance for the pressure equations for multi-segment wells. Default: 1000
+    --tolerance-well-control=SCALAR               Tolerance for the well control equations. Default: 1e-07
+    --tolerance-wells=SCALAR                      Well convergence tolerance. Default: 0.0001
+    --update-equations-scaling=BOOLEAN            Update scaling factors for mass balance equations during the run. Default: false
+    --use-gmres=BOOLEAN                           Use GMRES as the linear solver. Default: false
+    --use-hy-ne=BOOLEAN                           Wheter or not to use Hybrid Newton. Default: false
+    --use-implicit-ipr=BOOLEAN                    Compute implict IPR for stability checks and stable solution search. Default: true
+    --use-multisegment-well=BOOLEAN               Use the well model for multi-segment wells instead of the one for single-segment wells. Default: true
+    --use-update-stabilization=BOOLEAN            Try to detect and correct oscillations or stagnation during the Newton method. Default: true
+    --verify-gpu-aware-mpi=BOOLEAN                Verify that the MPI implementation supports GPU aware MPI. If this is set to true *and* --gpu-aware-mpi=true, the simulation will fail if the MPI implementation does not support GPU aware MPI. Note that the verification is not exhaustive, and some configurations will not verify, but will work in practice. Usage: --verify-gpu-aware-mpi=[true|false]. . Default: false
+    --water-only-threshold=SCALAR                 Cells with water saturation above or equal is considered one-phase water only. Default: 1
+    --well-group-constraints-max-iterations=INTEGER  Maximum number of iterations in the well/group switching algorithm. Default: 1
+--------------------------------------------------------------------------
+MPI_ABORT was invoked on rank 0 in communicator MPI_COMM_WORLD
+with errorcode 1.
+
+NOTE: invoking MPI_ABORT causes Open MPI to kill all MPI processes.
+You may or may not see output from other processes, depending on
+exactly when Open MPI kills them.
+--------------------------------------------------------------------------

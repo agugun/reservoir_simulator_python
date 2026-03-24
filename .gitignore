@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.tmp/
+.vscode/
+*.EGRID
+*.INIT
+*.UNRST
+*.UNSMRY
+*.SMSPEC
+*.ESMRY
+test_output.UNRST

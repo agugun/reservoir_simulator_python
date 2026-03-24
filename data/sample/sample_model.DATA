@@ -1,0 +1,69 @@
+RUNSPEC
+
+TITLE
+Sample Reservoir Model
+
+DIMENS
+ 5 5 3 /
+
+TABDIMS
+ 1 1 20 20 1 20 /
+
+OIL
+WATER
+
+FIELD
+
+GRID
+
+DX
+ 75*100.0 /
+
+DY
+ 75*100.0 /
+
+DZ
+ 75*20.0 /
+
+PORO
+ 75*0.25 /
+
+PERMX
+ 75*50.0 /
+
+PERMY
+ 75*50.0 /
+
+PERMZ
+ 75*5.0 /
+
+PROPS
+
+DENSITY
+   55.0  62.4   0.05 /
+
+PVTW
+   4000.0  1.0   1e-5   1.0   0.0 /
+
+PVCDO
+   4000.0  1.2   1e-5   2.5   0.0 /
+
+SOLUTION
+
+PRESSURE
+ 75*4000.0 /
+
+SCHEDULE
+
+WELSPECS
+   PROD1  G1    3  3  1      OIL    /
+/
+
+WCONPROD
+   PROD1  OPEN    ORAT     500   -1    -1    -1    -1    2000 /
+/
+
+TSTEP
+ 10 10 10 10 10 /
+
+END

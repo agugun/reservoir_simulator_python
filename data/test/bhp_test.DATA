@@ -1,0 +1,55 @@
+-- BHP Test Case
+-- 5x5x1 grid, single producer with BHP control
+
+RUNSPEC
+DIMENS
+ 5 5 1 /
+
+TABDIMS
+ 1 1 20 20 2 20 /
+
+GRID
+DX
+ 25*100 /
+DY
+ 25*100 /
+DZ
+ 25*20 /
+
+PORO
+ 25*0.25 /
+
+PERMX
+ 25*100 /
+PERMY
+ 25*100 /
+PERMZ
+ 25*10 /
+
+PROPS
+DENSITY
+ 50 62.4 0.01 /
+
+PVCDO
+ 3000 1.0 1e-5 1.0 0.0 /
+
+ROCK
+ 3000 3e-6 /
+
+SOLUTION
+PRESSURE
+ 25*4000 /
+
+SCHEDULE
+WELSPECS
+ 'PROD1' 'G1' 3 3 1 'OIL' /
+/
+
+WCONPROD
+ 'PROD1' 'OPEN' 'BHP' 10000 10000 10000 10000 10000 2000 /
+/
+
+TSTEP
+ 10 10 10 10 10 /
+
+END
