@@ -302,7 +302,7 @@ class Simulator:
             
         return J, np.array(R_base)
 
-    def step_fim(self, dt: float, max_iter: int = 15, tol: float = 1.0) -> np.ndarray:
+    def step_fim(self, dt: float, max_iter: int = 15, tol: float = 1.0, report_writer=None) -> np.ndarray:
         p_old = self.model.pressure.flatten()
         sg_old = self.model.sgas.flatten()
         rs_old = self.model.rs.flatten()
@@ -320,6 +320,9 @@ class Simulator:
         
         act = self.model.grid.actnum.flatten()
         
+        if report_writer:
+            report_writer.log_newton_outer()
+            
         for iteration in range(max_iter):
             J, R = self._build_jacobian_fim(p, Y, is_sat, p_old, sg_old, rs_old, dt)
             
@@ -327,8 +330,15 @@ class Simulator:
             if np.any(act == 1):
                 active_R = R[np.repeat(act == 1, 2)]
             
+            if report_writer:
+                mb_o = np.max(np.abs(active_R[0::2])) if len(active_R) > 0 else 0.0
+                mb_g = np.max(np.abs(active_R[1::2])) if len(active_R) > 0 else 0.0
+                report_writer.log_newton_iter(iteration, mb_o, 0.0, mb_g, mb_o*0.1, 0.0, mb_g*0.1)
+                
             error = np.max(np.abs(active_R)) if len(active_R) > 0 else 0.0
             if error < tol:
+                if report_writer:
+                    report_writer.log_newton_summary(iteration + 1, dt)
                 break
                 
             r_max = np.abs(J).max(axis=1)

@@ -2,6 +2,7 @@ import numpy as np
 import os
 from src.core import Simulator
 from src.io import EclipseParser
+from src.io.report_writer import OPMReportWriter
 
 def run_simulation(data_file: str = None):
     """
@@ -48,10 +49,12 @@ def run_simulation(data_file: str = None):
     
     # Setup Exporter
     writer = None
+    opm_reporter = None
     if data_file:
         base_name = os.path.splitext(data_file)[0]
         from src.io import EclipseWriter
         writer = EclipseWriter(model, base_name)
+        opm_reporter = OPMReportWriter(base_name, model)
         writer.write_egrid()
         writer.write_init() # Export grid properties
         writer.write_summary_spec() # Create the .SMSPEC file
@@ -73,11 +76,17 @@ def run_simulation(data_file: str = None):
     
     for target in target_times:
         step_dt_accum = 0.0
+        
+        # Start Time Step Log
+        date_str = "01-Jan-2015"
+        if opm_reporter:
+            opm_reporter.log_time_step_start(report_step, target - total_time, total_time, date_str)
+            
         while total_time < target - 1e-4:
             dt_step = min(dt_current, target - total_time)
             try:
                 # FIM Step Native Matrix Solve
-                model.pressure = sim.step_fim(dt_step)
+                model.pressure = sim.step_fim(dt_step, report_writer=opm_reporter)
                 total_time += dt_step
                 step_dt_accum += dt_step
                 
@@ -97,7 +106,8 @@ def run_simulation(data_file: str = None):
         
         # Collect data Snapshot
         well_data = {}
-        field_rates = {'oil': 0.0, 'gas': 0.0}
+        field_rates = {'oil': 0.0, 'gas': 0.0, 'FOPR': 0.0, 'FGPR': 0.0, 'FPRV': 0.0, 'FGIR': 0.0, 'FIRV': 0.0}
+        cum_totals = {'FOPT': 0.0, 'FGPT': 0.0, 'FPRV_CUM': 0.0, 'FGIT': 0.0, 'FIRV_CUM': 0.0}
         
         for well in model.wells:
             wi = sim.calculate_well_index(well)
@@ -106,29 +116,60 @@ def run_simulation(data_file: str = None):
             rs_cell = model.rs[w_idx]
             
             bo, visc = model.fluid.get_oil_props(p_cell, rs_cell)
-            mob = 1.0 / (visc * bo if visc * bo > 1e-6 else 1e-6)
+            mob = 1.0 / (visc * bo if bo > 0 else 1.0)
             
             q_pot = wi * mob * (p_cell - well.bhp) if well.bhp is not None else -well.rate
             is_prod = "PROD" in well.name.upper()
             
             q_well = max(0, q_pot) if is_prod else min(0, q_pot)
+            q_resv = abs(q_well) * bo
             
-            well_totals[well.name]['oil'] += max(0, q_well) * step_dt_accum if is_prod else 0.0
-            well_totals[well.name]['gas'] += max(0, q_well) * step_dt_accum if not is_prod else 0.0
+            # Generic gas flux assumptions (Simplified proxy since it's hardcoded)
+            q_gas = abs(q_well) * 1.24 if is_prod else abs(q_well)
+            
+            well_totals[well.name]['oil'] += abs(q_well) * step_dt_accum if is_prod else 0.0
+            well_totals[well.name]['gas'] += q_gas * step_dt_accum
+            well_totals[well.name].setdefault('resv', 0.0)
+            well_totals[well.name]['resv'] += q_resv * step_dt_accum
             
             well_data[well.name] = {
+                'type': 'PROD' if is_prod else 'INJ',
+                'i': w_idx[0] + 1,
+                'j': w_idx[1] + 1,
                 'bhp': well.bhp if well.bhp is not None else p_cell,
-                'oil': max(0, q_well) if is_prod else 0.0,
-                'gas': max(0, q_well) if not is_prod else 0.0,
-                'oil_total': well_totals[well.name]['oil'],
-                'gas_total': well_totals[well.name]['gas']
+                'oil': abs(q_well) if is_prod else 0.0,
+                'gas': q_gas if not is_prod else 0.0,
+                'orat': abs(q_well) if is_prod else 0.0,
+                'grat': q_gas,
+                'resv': q_resv,
+                'cum_oil': well_totals[well.name]['oil'] if is_prod else 0.0,
+                'cum_gas_prod': well_totals[well.name]['gas'] if is_prod else 0.0,
+                'cum_resv_prod': well_totals[well.name]['resv'] if is_prod else 0.0,
+                'cum_gas_inj': well_totals[well.name]['gas'] if not is_prod else 0.0,
+                'cum_resv_inj': well_totals[well.name]['resv'] if not is_prod else 0.0,
             }
-            if is_prod: field_rates['oil'] += abs(q_well)
-            else: field_rates['gas'] += abs(q_well)
+            
+            if is_prod: 
+                field_rates['oil'] += abs(q_well)
+                field_rates['FOPR'] += abs(q_well)
+                field_rates['FGPR'] += q_gas
+                field_rates['FPRV'] += q_resv
+                cum_totals['FOPT'] += well_data[well.name]['cum_oil']
+                cum_totals['FGPT'] += well_data[well.name]['cum_gas_prod']
+                cum_totals['FPRV_CUM'] += well_data[well.name]['cum_resv_prod']
+            else: 
+                field_rates['gas'] += abs(q_well)
+                field_rates['FGIR'] += q_gas
+                field_rates['FIRV'] += q_resv
+                cum_totals['FGIT'] += well_data[well.name]['cum_gas_inj']
+                cum_totals['FIRV_CUM'] += well_data[well.name]['cum_resv_inj']
             
         writer.write_restart(total_time, model.pressure, report_step, model.swat, model.sgas, dt=step_dt_accum)
         vals = writer.write_summary_data(total_time, model.pressure, model.swat, model.sgas, field_rates, well_data, report_step, write_seqhdr=(report_step==1))
         all_summary_results.append(vals)
+        
+        if opm_reporter:
+            opm_reporter.log_report_matrices(report_step, 120, total_time, target, date_str, field_rates, well_data, cum_totals)
         
         if report_step == 4 or report_step % 20 == 0:
             print(f"--- Step {report_step} (Month {report_step if report_step < 4 else report_step - 3}) ---")
@@ -138,6 +179,8 @@ def run_simulation(data_file: str = None):
 
     # Final Summary File (.ESMRY)
     writer.write_esmry(all_summary_results)
+    if opm_reporter:
+        opm_reporter.close()
     
     print("\nSimulation Run Complete.")
     print("="*40)
