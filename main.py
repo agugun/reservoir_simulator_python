@@ -90,8 +90,17 @@ def run_simulation(data_file: str = None):
                 total_time += dt_step
                 step_dt_accum += dt_step
                 
-                # Successful convergence: attempt to magnify stepsize smoothly
-                dt_current = min(dt_current * 1.5, 30.4375)
+                # Advanced PID Target Time-Stepping Logic
+                iters = getattr(sim, 'last_iterations', 1)
+                target_iters = 4.0  # OPM Industrial target for Newton sequences
+                omega = 0.5
+                
+                # Calculate convergence scaling ratio rationally
+                alpha = (target_iters + omega) / (iters + omega)
+                alpha = max(0.5, min(alpha, 2.0)) # Bound magnification limits securely
+                
+                # Safely update future baseline unconditionally ensuring stability
+                dt_current = min(dt_current * alpha, 30.4375)
                 
             except RuntimeError as e:
                 # Newton diverged! Chop the time step

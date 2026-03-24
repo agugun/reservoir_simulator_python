@@ -352,6 +352,7 @@ class Simulator:
             if error < tol:
                 if report_writer:
                     report_writer.log_newton_summary(iteration + 1, dt)
+                self.last_iterations = iteration + 1
                 break
                 
             r_max = np.abs(J).max(axis=1)
