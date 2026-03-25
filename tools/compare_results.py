@@ -190,7 +190,9 @@ def figure1_time_series(opm: dict, py: dict, out_path: str):
         t_p = py.get("TIME", [])
         if bhp_key in opm:
             ax_bhp.plot(t_o, opm[bhp_key], color=OPM_COLOR, lw=2, label="OPM Flow")
-        py_bhp = next((k for k in py if "WBHP" in k), None)
+        py_bhp = next((k for k in py if "WBHP:PROD" in k.upper()), None)
+        if not py_bhp:
+            py_bhp = next((k for k in py if "WBHP" in k), None)
         if py_bhp:
             ax_bhp.plot(t_p, py[py_bhp], color=PY_COLOR, lw=2, label="Python Sim", ls="--")
         _ax_style(ax_bhp, f"Well BHP ({bhp_key})")

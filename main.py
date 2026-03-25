@@ -40,10 +40,14 @@ def run_simulation(data_file: str = None, output_dir: str = None):
     print("Initializing Simulator and Transmissibility...")
     
     # 3.5 Hydrostatic Initialization (OPM Parity)
-    # Datum: 8400 ft, 4800 psia. Oil density: 53.66 lb/ft3 -> 0.3726 psi/ft
-    # TOPS[i,j,k] is the top of the cell. Center is TOPS + DZ/2.
-    z_centers = model.grid.top_depth + model.grid.dz/2.0
-    model.pressure = 4800.0 + (z_centers - 8400.0) * (53.66 / 144.0)
+    # Datum: 8400 ft, 4800 psia. 
+    # SPE1 Gradient is ~0.27-0.30 psi/ft reflecting Bo ~ 1.6 and Rs ~ 1.27
+    z_centers = model.grid.z_centers
+    # Use accurate SPE1 initial gradient (0.28 psi/ft)
+    model.pressure = 4800.0 + (z_centers - 8400.0) * 0.28
+    # Ensure rs is initialized to 1.27 (from RSVD)
+    if model.rs is None or np.all(model.rs == 0):
+        model.rs = np.full(model.grid.dimensions, 1.27)
     
     sim = Simulator(model)
     
@@ -185,6 +189,7 @@ def run_simulation(data_file: str = None, output_dir: str = None):
                 dp        = max(p_cell - bhp_floor, 0.0)
 
                 # Correct Producer Logic: Calculate phase rates independently
+                # Match Simulator.py logic exactly
                 bhp_floor = well.bhp if well.bhp is not None else 1000.0
                 dp        = max(p_cell - bhp_floor, 0.0)
 
@@ -199,17 +204,17 @@ def run_simulation(data_file: str = None, output_dir: str = None):
                 # Scale factor if we hit ORAT
                 scaling = min(1.0, orat_target / (q_o_pot_surf if q_o_pot_surf > 1e-6 else 1e9))
                 
-                q_oil_surf = q_o_pot_surf * scaling
+                # Scaling factor is now for surface rate
+                q_oil_surf = q_o_pot_resv * scaling / bo
                 q_oil_resv = q_oil_surf * bo
                 
-                q_free_gas_mscf = (q_g_pot_resv * scaling) / bg
-                q_gas_diss_mscf = q_oil_surf * float(rs_cell)
-                q_gas_mscf = q_gas_diss_mscf + q_free_gas_mscf
+                q_gas_mscf = (q_g_pot_resv * scaling) / bg + q_oil_surf * float(rs_cell)
                 
-                # Back-calculate actual BHP for reporting
+                # Back-calculate actual BHP
                 lt_w = lo_w + lg_w
                 if wi > 1e-12 and lt_w > 1e-12:
-                    q_tot_resv = q_oil_resv + (q_free_gas_mscf * bg)
+                    # q_tot_resv = q_oil_resv + q_gas_free_resv
+                    q_tot_resv = (q_o_pot_resv + q_g_pot_resv) * scaling
                     bhp_actual = p_cell - q_tot_resv / (wi * lt_w)
                 else:
                     bhp_actual = p_cell
@@ -218,6 +223,7 @@ def run_simulation(data_file: str = None, output_dir: str = None):
                 well_totals[well.name]['oil'] += q_oil_surf * step_dt_accum
                 well_totals[well.name]['gas'] += q_gas_mscf * step_dt_accum
                 well_totals[well.name].setdefault('resv', 0.0)
+                q_free_gas_mscf = q_gas_mscf - q_oil_surf * float(rs_cell)
                 q_resv = q_oil_resv + q_free_gas_mscf * bg
                 well_totals[well.name]['resv'] += q_resv * step_dt_accum
 

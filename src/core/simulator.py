@@ -135,7 +135,7 @@ class Simulator:
         grid = self.model.grid
         nx, ny, nz = grid.nx, grid.ny, grid.nz
         N = grid.total_cells
-        vp_base = jnp.array(self.pore_volume.flatten())
+        vp_base = jnp.array(self.pore_volume.flatten(order='F'))
         
         cr = getattr(self.model.rock, 'compressibility', 3e-6)
         pref = 4000.0
@@ -166,18 +166,18 @@ class Simulator:
         R_o = (1.0 / dt) * (vp * so / bo - vp_old * so_old / bo_old)
         R_g = (1.0 / dt) * (vp * (sg / bg + rs * so / bo) - vp_old * (sg_old / bg_old + rs_old * so_old / bo_old))
         
-        p_3d = p.reshape(grid.dimensions)
-        lam_o_3d = lam_o.reshape(grid.dimensions)
-        lam_g_3d = lam_g.reshape(grid.dimensions)
-        rs_3d = rs.reshape(grid.dimensions)
+        p_3d = p.reshape(grid.dimensions, order='F')
+        lam_o_3d = lam_o.reshape(grid.dimensions, order='F')
+        lam_g_3d = lam_g.reshape(grid.dimensions, order='F')
+        rs_3d = rs.reshape(grid.dimensions, order='F')
         z_3d = jnp.array(grid.z_centers)
         
         rho_o_surf = getattr(self.model.fluid, 'density_oil', 53.66)
         rho_g_surf = getattr(self.model.fluid, 'density_gas', 0.0533)
         # Unit conversion: 1 MSCF = 1000 SCF, 1 RB = 5.61458 ft3 -> 1000/5.61458 = 178.1076
         f_surf = 1000.0 / 5.61458
-        gam_o_3d = ((rho_o_surf + rs * rho_g_surf * f_surf) / bo * 0.006944).reshape(grid.dimensions)
-        gam_g_3d = (rho_g_surf * f_surf / bg * 0.006944).reshape(grid.dimensions)
+        gam_o_3d = ((rho_o_surf + rs * rho_g_surf * f_surf) / bo * 0.006944).reshape(grid.dimensions, order='F')
+        gam_g_3d = (rho_g_surf * f_surf / bg * 0.006944).reshape(grid.dimensions, order='F')
         
         flow_o = jnp.zeros_like(p_3d)
         flow_g = jnp.zeros_like(p_3d)
@@ -249,8 +249,8 @@ class Simulator:
             flow_g = flow_g.at[:,:,:-1].add(flux_g)
             flow_g = flow_g.at[:,:,1:].add(-flux_g)
             
-        R_o = R_o + flow_o.flatten()
-        R_g = R_g + flow_g.flatten()
+        R_o = R_o + flow_o.flatten(order='F')
+        R_g = R_g + flow_g.flatten(order='F')
         
         for well in self.model.wells:
             w_idx = well.location[0] + well.location[1]*nx + well.location[2]*nx*ny
@@ -262,23 +262,25 @@ class Simulator:
             req_rate = abs(well.rate) if well.rate else 0.0
             
             # Producer Logic: decoupled phase rates
-            q_pot_o = wi * lo_w * (p[w_idx] - well.bhp) if well.bhp is not None else 1e12
-            q_pot_g = wi * lg_w * (p[w_idx] - well.bhp) if well.bhp is not None else 0.0
+            # Standard Potential: wi * (k/mu) * dp
+            q_pot_o_resv = wi * lo_w * (p[w_idx] - well.bhp) if well.bhp is not None else 1e12
+            q_pot_g_resv = wi * lg_w * (p[w_idx] - well.bhp) if well.bhp is not None else 0.0
             
             bo_w = bo[w_idx]
-            q_surf_o_pot = q_pot_o / bo_w
+            q_surf_o_pot = q_pot_o_resv / bo_w
             
             # Rate limited if orat (req_rate) is exceeded
             is_limited = (req_rate > 0) & (q_surf_o_pot > req_rate) & (q_surf_o_pot > 1e-6)
             scaling = jnp.where(is_limited, req_rate / jnp.maximum(q_surf_o_pot, 1e-9), 1.0)
             
-            # Final phase rates
-            q_o_prod = jnp.where(is_prod, q_surf_o_pot * scaling * bo_w, 0.0)
-            q_g_prod = jnp.where(is_prod, q_pot_g * scaling, 0.0)
+            # Final phase rates for R calculation
+            q_o_prod = jnp.where(is_prod, q_surf_o_pot * scaling, 0.0)
+            q_g_prod = jnp.where(is_prod, (q_pot_g_resv / bg[w_idx]) * scaling, 0.0)
             
             # Injector Logic (if not is_prod)
-            # q_pot_g_inj uses bh_inj - p_cell
-            q_pot_g_inj = wi * lg_w * (well.bhp - p[w_idx]) if well.bhp is not None else 1e12
+            # Use endpoint mobility for injector (krg=1.0)
+            mob_g_inj = 1.0 / (mu_g[w_idx] * bg[w_idx])
+            q_pot_g_inj = wi * mob_g_inj * (well.bhp - p[w_idx]) if well.bhp is not None else 1e12
             q_g_inj_scaled = jnp.clip(q_pot_g_inj, 0, req_rate) if well.rate else q_pot_g_inj
             
             q_o = q_o_prod
@@ -289,7 +291,7 @@ class Simulator:
             R_o = R_o.at[w_idx].add(q_o)
             R_g = R_g.at[w_idx].add(q_g)
             
-        act = jnp.array(grid.actnum.flatten())
+        act = jnp.array(grid.actnum.flatten(order='F'))
         R_o = jnp.where(act == 0, 0.0, R_o)
         R_g = jnp.where(act == 0, 0.0, R_g)
         
@@ -319,7 +321,7 @@ class Simulator:
         J[:, 0::2] = np.array(J_p)
         J[:, 1::2] = np.array(J_y)
         
-        act = self.model.grid.actnum.flatten()
+        act = self.model.grid.actnum.flatten(order='F')
         inactive = np.where(act == 0)[0]
         if len(inactive) > 0:
             J[2*inactive, :] = 0.0
@@ -330,9 +332,9 @@ class Simulator:
         return J, np.array(R_base)
 
     def step_fim(self, dt: float, max_iter: int = 15, tol: float = 1.0, report_writer=None) -> np.ndarray:
-        p_old = self.model.pressure.flatten()
-        sg_old = self.model.sgas.flatten()
-        rs_old = self.model.rs.flatten()
+        p_old = self.model.pressure.flatten(order='F')
+        sg_old = self.model.sgas.flatten(order='F')
+        rs_old = self.model.rs.flatten(order='F')
         
         p = p_old.copy()
         
@@ -345,7 +347,7 @@ class Simulator:
         # Y is our secondary variable array
         Y = np.where(is_sat, sg_old, rs_old)
         
-        act = self.model.grid.actnum.flatten()
+        act = self.model.grid.actnum.flatten(order='F')
         
         if report_writer:
             report_writer.log_newton_outer()
@@ -429,9 +431,9 @@ class Simulator:
             raise RuntimeError(f"FIM Newton Solver divergence after {max_iter} iterations (Residual: {error:.4f})")
             
         rsat_final = self.model.fluid.get_rsat(p)
-        self.model.pressure = p.reshape(self.model.grid.dimensions)
-        self.model.sgas = np.where(is_sat, Y, 0.0).reshape(self.model.grid.dimensions)
-        self.model.rs = np.where(is_sat, rsat_final, Y).reshape(self.model.grid.dimensions)
+        self.model.pressure = p.reshape(self.model.grid.dimensions, order='F')
+        self.model.sgas = np.where(is_sat, Y, 0.0).reshape(self.model.grid.dimensions, order='F')
+        self.model.rs = np.where(is_sat, rsat_final, Y).reshape(self.model.grid.dimensions, order='F')
         
         self.time += dt
         return self.model.pressure
