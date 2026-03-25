@@ -17,20 +17,24 @@ class EclipseWriter:
         unrst_ref = "/home/gugun/repo/reservoir_simulation/data/spe1/SPE1CASE1.UNRST"
         init_ref = "/home/gugun/repo/reservoir_simulation/data/spe1/SPE1CASE1.INIT"
         
+        self.ih_ref0 = self.ih_ref1 = np.zeros(411, dtype=np.int32)
+        self.dh_ref0 = np.zeros(229, dtype=np.float64)
+        self.unrst_meta = {}
+        
         if os.path.exists(unrst_ref):
-            ref_data = list(resfo.read(unrst_ref))
-            self.ih_ref0 = ref_data[1][1].copy() # Step 0 INTEHEAD
-            self.ih_ref1 = ref_data[11][1].copy() # Step 1 INTEHEAD
-            self.dh_ref0 = ref_data[3][1].copy() # Step 0 DOUBHEAD
-            
-            # Cache step 1 UNRST metadata arrays
-            self.unrst_meta = {}
-            for name, data in ref_data[14:27]: # IGRP to XCON
-                self.unrst_meta[name.strip()] = data.copy()
-        else:
-            self.ih_ref0 = self.ih_ref1 = np.zeros(411, dtype=np.int32)
-            self.dh_ref0 = np.zeros(229, dtype=np.float64)
-            self.unrst_meta = {}
+            try:
+                ref_data = list(resfo.read(unrst_ref))
+                if len(ref_data) > 11:
+                    self.ih_ref0 = ref_data[1][1].copy() # Step 0 INTEHEAD
+                    self.ih_ref1 = ref_data[11][1].copy() # Step 1 INTEHEAD
+                    self.dh_ref0 = ref_data[3][1].copy() # Step 0 DOUBHEAD
+                    
+                    # Cache step 1 UNRST metadata arrays (IGRP to XCON)
+                    if len(ref_data) > 27:
+                        for name, data in ref_data[14:27]:
+                            self.unrst_meta[name.strip()] = data.copy()
+            except Exception as e:
+                print(f"Warning: Failed to load UNRST template: {e}. Falling back to defaults.")
 
         self.init_template = {}
         if os.path.exists(init_ref):
@@ -48,6 +52,7 @@ class EclipseWriter:
             (b"TIME    ", b":+:+:+:+", 0, b"DAYS    "), (b"YEARS   ", b":+:+:+:+", 0, b"YEARS   "),
             (b"BGSAT   ", b":+:+:+:+", 1, b"        "), (b"BGSAT   ", b":+:+:+:+", 10, b"        "), (b"BGSAT   ", b":+:+:+:+", 100, b"        "), (b"BGSAT   ", b":+:+:+:+", 101, b"        "), (b"BGSAT   ", b":+:+:+:+", 110, b"        "), (b"BGSAT   ", b":+:+:+:+", 200, b"        "), (b"BGSAT   ", b":+:+:+:+", 201, b"        "), (b"BGSAT   ", b":+:+:+:+", 210, b"        "), (b"BGSAT   ", b":+:+:+:+", 300, b"        "),
             (b"BPR     ", b":+:+:+:+", 1, b"PSIA    "), (b"BPR     ", b":+:+:+:+", 300, b"PSIA    "), (b"FGOR    ", b":+:+:+:+", 0, b"MSCF/STB"), (b"FOPR    ", b":+:+:+:+", 0, b"STB/DAY "),
+            (b"FGPR    ", b":+:+:+:+", 0, b"MSCF/DAY"), (b"FGIR    ", b":+:+:+:+", 0, b"MSCF/DAY"), (b"FOPT    ", b":+:+:+:+", 0, b"STB     "), (b"FGPT    ", b":+:+:+:+", 0, b"MSCF    "),
             (b"WBHP    ", b"INJ     ", 0, b"PSIA    "), (b"WBHP    ", b"PROD    ", 0, b"PSIA    "), (b"WGIR    ", b"INJ     ", 0, b"MSCF/DAY"), (b"WGIR    ", b"PROD    ", 0, b"MSCF/DAY"), (b"WGIT    ", b"INJ     ", 0, b"MSCF    "), (b"WGIT    ", b"PROD    ", 0, b"MSCF    "), (b"WGOR    ", b"PROD    ", 0, b"MSCF/STB"), (b"WGPR    ", b"INJ     ", 0, b"MSCF/DAY"), (b"WGPR    ", b"PROD    ", 0, b"MSCF/DAY"), (b"WGPT    ", b"INJ     ", 0, b"MSCF    "), (b"WGPT    ", b"PROD    ", 0, b"MSCF    "), (b"WOIR    ", b"INJ     ", 0, b"STB/DAY "), (b"WOIR    ", b"PROD    ", 0, b"STB/DAY "), (b"WOIT    ", b"INJ     ", 0, b"STB     "), (b"WOIT    ", b"PROD    ", 0, b"STB     "), (b"WOPR    ", b"INJ     ", 0, b"STB/DAY "), (b"WOPR    ", b"PROD    ", 0, b"STB/DAY "), (b"WOPT    ", b"INJ     ", 0, b"STB     "), (b"WOPT    ", b"PROD    ", 0, b"STB     "), (b"WWIR    ", b"INJ     ", 0, b"STB/DAY "), (b"WWIR    ", b"PROD    ", 0, b"STB/DAY "), (b"WWIT    ", b"INJ     ", 0, b"STB     "), (b"WWIT    ", b"PROD    ", 0, b"STB     "), (b"WWPR    ", b"INJ     ", 0, b"STB/DAY "), (b"WWPR    ", b"PROD    ", 0, b"STB/DAY "), (b"WWPT    ", b"INJ     ", 0, b"STB     "), (b"WWPT    ", b"PROD    ", 0, b"STB     "),
         ]
 
@@ -161,9 +166,27 @@ class EclipseWriter:
             elif k=="BGSAT" and num > 0: vals.append(g_flat[num-1])
             elif k=="BPR": vals.append(np.mean(p_full)) # Fallback
             elif k=="FOPR": vals.append(fr.get('oil',0.0))
-            elif k=="FGOR": o=fr.get('oil',0.0); vals.append(fr.get('gas',0.0)/(o if o>1e-6 else 1e-6))
+            elif k=="FGPR": vals.append(fr.get('gas',0.0))
+            elif k=="FGIR": vals.append(fr.get('FGIR',0.0))
+            elif k=="FOPT": vals.append(fr.get('FOPT',0.0))
+            elif k=="FGPT": vals.append(fr.get('FGPT',0.0))
+            elif k=="FGOR":
+                o=fr.get('oil',0.0)
+                vals.append(fr.get('gas',0.0)/(o if o>1e-6 else 1e-6))
             elif k=="WBHP": vals.append(wd.get(g,{}).get('bhp',0.0))
-            elif k in ["WOPR", "WGIR", "WGPT", "WOPT"]: vals.append(wd.get(g, {}).get(k[1:4].lower(), 0.0))
+            elif k in ("WOPR","WOIR"): vals.append(wd.get(g,{}).get('opr',0.0))
+            elif k in ("WGPR",):        vals.append(wd.get(g,{}).get('gpr',0.0))
+            elif k in ("WWPR",):        vals.append(wd.get(g,{}).get('wpr',0.0))
+            elif k in ("WGIR",):        vals.append(wd.get(g,{}).get('gir',0.0))
+            elif k in ("WWIR",):        vals.append(wd.get(g,{}).get('wir',0.0))
+            elif k in ("WOPT","WOIT"): vals.append(wd.get(g,{}).get('opt',0.0))
+            elif k in ("WGPT",):        vals.append(wd.get(g,{}).get('gpt',0.0))
+            elif k in ("WGIT",):        vals.append(wd.get(g,{}).get('git',0.0))
+            elif k in ("WWIT",):        vals.append(wd.get(g,{}).get('wit',0.0))
+            elif k in ("WWPT",):        vals.append(wd.get(g,{}).get('wpt',0.0))
+            elif k in ("WGOR",):
+                o=wd.get(g,{}).get('opr',0.0)
+                vals.append(wd.get(g,{}).get('gpr',0.0)/(o if o>1e-6 else 1e-6))
             else: vals.append(0.0)
         if write_seqhdr: self.unsmry_records.append(("SEQHDR  ", np.array([si], dtype=np.int32)))
         self.unsmry_records.append(("MINISTEP", np.array([len([1 for n,d in self.unsmry_records if n.strip()=="PARAMS"])+1], dtype=np.int32)))

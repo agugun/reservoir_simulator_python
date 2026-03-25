@@ -195,51 +195,79 @@ class EclipseParser:
                     specs[name][2] = k_top
 
         # 3. Production control (WCONPROD)
+        # WCONPROD columns: Name, Status, Control, ORAT, WRAT, GRAT, LRAT, RESV, BHP
         if 'WCONPROD' in self.deck:
             for row in self.deck['WCONPROD']:
                 name = row[0].get_str(0)
-                if name in specs:
-                    status = row[1].get_str(0)
-                    if status == 'SHUT':
-                        continue
-                    
-                    control = row[2].get_str(0)
-                    rate = 0.0
-                    bhp = None
-                    
-                    if control == 'ORAT':
-                        rate = -self._get_val(row[3])
-                    elif control == 'BHP':
-                        bhp = self._get_val(row[8])
-                    else:
-                        rate = -self._get_val(row[3])
-                    
-                    if bhp is None and len(row) > 8:
-                        bhp = self._get_val(row[8])
-                        
-                    wells.append(Well(name, tuple(specs[name]), rate=rate, bhp=bhp))
+                if name not in specs:
+                    continue
+                status = row[1].get_str(0)
+                if status == 'SHUT':
+                    continue
+
+                control = row[2].get_str(0)
+                orat = None
+                grat = None
+                bhp_min = None
+
+                # Always read the ORAT target (col 3) if non-zero
+                try:
+                    orat_val = self._get_val(row[3])
+                    if orat_val > 0:
+                        orat = orat_val
+                except Exception:
+                    pass
+
+                # Read BHP minimum constraint (col 8)
+                try:
+                    if len(row) > 8:
+                        bhp_val = self._get_val(row[8])
+                        if bhp_val > 0:
+                            bhp_min = bhp_val
+                except Exception:
+                    pass
+
+                # The `rate` in Well is the negative ORAT (for legacy backward compat)
+                rate = -orat if orat else 0.0
+
+                wells.append(Well(name, tuple(specs[name]),
+                                  rate=rate, bhp=bhp_min,
+                                  orat=orat, grat=grat))
 
         # WCONINJE: Name, Type, Status, Control, Rate, ResV, BHP
         if 'WCONINJE' in self.deck:
             for row in self.deck['WCONINJE']:
                 name = row[0].get_str(0)
-                if name in specs:
-                    status = row[2].get_str(0)
-                    if status == 'SHUT':
-                        continue
-                        
-                    control = row[3].get_str(0)
-                    rate = 0.0
-                    bhp = None
-                    
-                    if control == 'RATE':
-                        rate = self._get_val(row[4]) # Injection is positive
-                    elif control == 'BHP':
-                        bhp = self._get_val(row[6])
-                        
-                    if bhp is None and len(row) > 6:
-                        bhp = self._get_val(row[6])
-                        
-                    wells.append(Well(name, tuple(specs[name]), rate=rate, bhp=bhp))
-                    
+                if name not in specs:
+                    continue
+                status = row[2].get_str(0)
+                if status == 'SHUT':
+                    continue
+
+                control = row[3].get_str(0)
+                gir = None
+                rate = 0.0
+                bhp_max = None
+
+                # Gas injection rate target (col 4) — MSCF/day
+                try:
+                    rate_val = self._get_val(row[4])
+                    if rate_val > 0:
+                        gir = rate_val
+                        rate = gir   # positive = injection
+                except Exception:
+                    pass
+
+                # BHP maximum constraint (col 6)
+                try:
+                    if len(row) > 6:
+                        bhp_val = self._get_val(row[6])
+                        if bhp_val > 0:
+                            bhp_max = bhp_val
+                except Exception:
+                    pass
+
+                wells.append(Well(name, tuple(specs[name]),
+                                  rate=rate, bhp=bhp_max, gir=gir))
+
         return wells

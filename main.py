@@ -4,7 +4,7 @@ from src.core import Simulator
 from src.io import EclipseParser
 from src.io.report_writer import OPMReportWriter
 
-def run_simulation(data_file: str = None):
+def run_simulation(data_file: str = None, output_dir: str = None):
     """
     Main entry point for the reservoir simulation.
     Can load from an Eclipse .DATA file or use a hardcoded model.
@@ -27,8 +27,8 @@ def run_simulation(data_file: str = None):
         from src.core import Grid, Rock, Fluid, ReservoirModel, Well
         # Fallback to the original hardcoded model if no file provided
         grid = Grid(nx=5, ny=5, nz=3, dx=100.0, dy=100.0, dz=20.0)
-        rock = Rock.homogeneous(grid.dimensions, poro=0.25, perm_mD=50.0)
-        fluid = Fluid(viscosity=1.0, density=62.4, compressibility=1e-5, fvf=1.0)
+        rock = Rock.homogeneous(grid.dimensions, porosity=0.25, perm_x=50.0, perm_y=50.0, perm_z=50.0, compressibility=1e-6)
+        fluid = Fluid(density_oil=53.66, density_gas=0.06054)
         p_init = np.full(grid.dimensions, 4000.0)
         wells = [Well("PROD-1", (2, 2, 0), rate=-500.0)]
         model = ReservoirModel(grid, rock, fluid, p_init, wells=wells)
@@ -51,7 +51,14 @@ def run_simulation(data_file: str = None):
     writer = None
     opm_reporter = None
     if data_file:
-        base_name = os.path.splitext(data_file)[0]
+        # Resolve Base Name for outputs
+        if output_dir:
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+            base_name = os.path.join(output_dir, os.path.basename(os.path.splitext(data_file)[0]))
+        else:
+            base_name = os.path.splitext(data_file)[0]
+            
         from src.io import EclipseWriter
         writer = EclipseWriter(model, base_name)
         opm_reporter = OPMReportWriter(base_name, model)
@@ -115,7 +122,7 @@ def run_simulation(data_file: str = None):
         
         # Collect data Snapshot
         well_data = {}
-        field_rates = {'oil': 0.0, 'gas': 0.0, 'FOPR': 0.0, 'FGPR': 0.0, 'FPRV': 0.0, 'FGIR': 0.0, 'FIRV': 0.0}
+        field_rates = {'oil': 0.0, 'gas': 0.0, 'FOPR': 0.0, 'FGPR': 0.0, 'FPRV': 0.0, 'FGIR': 0.0, 'FIRV': 0.0, 'FOPT': 0.0, 'FGPT': 0.0}
         cum_totals = {'FOPT': 0.0, 'FGPT': 0.0, 'FPRV_CUM': 0.0, 'FGIT': 0.0, 'FIRV_CUM': 0.0}
         
         for well in model.wells:
@@ -123,56 +130,172 @@ def run_simulation(data_file: str = None):
             w_idx = well.location
             p_cell = model.pressure[w_idx]
             rs_cell = model.rs[w_idx]
-            
-            bo, visc = model.fluid.get_oil_props(p_cell, rs_cell)
-            mob = 1.0 / (visc * bo if bo > 0 else 1.0)
-            
-            q_pot = wi * mob * (p_cell - well.bhp) if well.bhp is not None else -well.rate
-            is_prod = "PROD" in well.name.upper()
-            
-            q_well = max(0, q_pot) if is_prod else min(0, q_pot)
-            q_resv = abs(q_well) * bo
-            
-            # Generic gas flux assumptions (Simplified proxy since it's hardcoded)
-            q_gas = abs(q_well) * 1.24 if is_prod else abs(q_well)
-            
-            well_totals[well.name]['oil'] += abs(q_well) * step_dt_accum if is_prod else 0.0
-            well_totals[well.name]['gas'] += q_gas * step_dt_accum
-            well_totals[well.name].setdefault('resv', 0.0)
-            well_totals[well.name]['resv'] += q_resv * step_dt_accum
-            
-            well_data[well.name] = {
-                'type': 'PROD' if is_prod else 'INJ',
-                'i': w_idx[0] + 1,
-                'j': w_idx[1] + 1,
-                'bhp': well.bhp if well.bhp is not None else p_cell,
-                'oil': abs(q_well) if is_prod else 0.0,
-                'gas': q_gas if not is_prod else 0.0,
-                'orat': abs(q_well) if is_prod else 0.0,
-                'grat': q_gas,
-                'resv': q_resv,
-                'cum_oil': well_totals[well.name]['oil'] if is_prod else 0.0,
-                'cum_gas_prod': well_totals[well.name]['gas'] if is_prod else 0.0,
-                'cum_resv_prod': well_totals[well.name]['resv'] if is_prod else 0.0,
-                'cum_gas_inj': well_totals[well.name]['gas'] if not is_prod else 0.0,
-                'cum_resv_inj': well_totals[well.name]['resv'] if not is_prod else 0.0,
-            }
-            
-            if is_prod: 
-                field_rates['oil'] += abs(q_well)
-                field_rates['FOPR'] += abs(q_well)
-                field_rates['FGPR'] += q_gas
+
+            bo, mu_o = model.fluid.get_oil_props(p_cell, rs_cell)
+            bo = max(bo, 0.5)   # guard against degenerate PVT
+
+            is_prod = well.is_producer
+
+            if is_prod:
+                # ── OPM-aligned producer: ORAT target with BHP-floor limit ──
+                #
+                # OPM logic (BlackoilWellModelConstraints):
+                #   1. Compute max deliverable rate at BHP_floor using Darcy + kro(Sg)
+                #   2. Actual rate = min(q_darcy_at_bhp_floor, ORAT_target)
+                #   3. When reservoir depletion / gas breakthrough reduces kro,
+                #      q_darcy < ORAT → well is BHP-limited, rate declines naturally.
+
+                sg_cell = float(model.sgas[w_idx])
+
+                # kro from SGOF table (same table simulator uses internally)
+                if hasattr(model.rock, 'sgof') and model.rock.sgof is not None:
+                    sg_arr  = np.array(model.rock.sgof['sg'])
+                    kro_arr = np.array(model.rock.sgof['krog'])
+                    kro_w   = float(np.interp(sg_cell, sg_arr, kro_arr))
+                else:
+                    sw_conn = 0.12
+                    so_cell = max(1.0 - sw_conn - sg_cell, 0.0)
+                    kro_w   = (so_cell / (1.0 - sw_conn)) ** 2
+
+                # Mobility at wellbore conditions
+                bg, mu_g = model.fluid.get_gas_props(p_cell)
+                bg = float(bg); mu_g = float(mu_g)
+                # bg is in RB/MSCF (consistent with PVDG)
+                
+                # Relative permeabilities from model.rock.sgof
+                if hasattr(model.rock, 'sgof') and model.rock.sgof is not None:
+                    sg_arr  = np.array(model.rock.sgof['sg'])
+                    krg_arr = np.array(model.rock.sgof['krg'])
+                    krg_w   = float(np.interp(sg_cell, sg_arr, krg_arr))
+                else:
+                    krg_w = (sg_cell / (1.0 - 0.12)) ** 2
+                    
+                lo_w = kro_w / (mu_o * bo)
+                lg_w = krg_w / (mu_g * bg)
+
+                bhp_floor = well.bhp if well.bhp is not None else 1000.0
+                dp        = max(p_cell - bhp_floor, 0.0)
+
+                # Correct Producer Logic: Calculate phase rates independently
+                bhp_floor = well.bhp if well.bhp is not None else 1000.0
+                dp        = max(p_cell - bhp_floor, 0.0)
+
+                # Potential reservoir rates (RB/day)
+                q_o_pot_resv = wi * lo_w * dp
+                q_g_pot_resv = wi * lg_w * dp
+                
+                # Check for rate targets (ORAT)
+                orat_target = well.orat if well.orat is not None else 1e9
+                q_o_pot_surf = q_o_pot_resv / bo
+                
+                # Scale factor if we hit ORAT
+                scaling = min(1.0, orat_target / (q_o_pot_surf if q_o_pot_surf > 1e-6 else 1e9))
+                
+                q_oil_surf = q_o_pot_surf * scaling
+                q_oil_resv = q_oil_surf * bo
+                
+                q_free_gas_mscf = (q_g_pot_resv * scaling) / bg
+                q_gas_diss_mscf = q_oil_surf * float(rs_cell)
+                q_gas_mscf = q_gas_diss_mscf + q_free_gas_mscf
+                
+                # Back-calculate actual BHP for reporting
+                lt_w = lo_w + lg_w
+                if wi > 1e-12 and lt_w > 1e-12:
+                    q_tot_resv = q_oil_resv + (q_free_gas_mscf * bg)
+                    bhp_actual = p_cell - q_tot_resv / (wi * lt_w)
+                else:
+                    bhp_actual = p_cell
+                bhp_actual = max(bhp_actual, bhp_floor)
+
+                well_totals[well.name]['oil'] += q_oil_surf * step_dt_accum
+                well_totals[well.name]['gas'] += q_gas_mscf * step_dt_accum
+                well_totals[well.name].setdefault('resv', 0.0)
+                q_resv = q_oil_resv + q_free_gas_mscf * bg
+                well_totals[well.name]['resv'] += q_resv * step_dt_accum
+
+                well_data[well.name] = {
+                    'type':    'PROD',
+                    'i': w_idx[0] + 1, 'j': w_idx[1] + 1,
+                    'bhp':     bhp_actual,          # actual wellbore BHP, not just floor
+                    # WOPR key expected by eclipse_writer
+                    'opr':     q_oil_surf,
+                    'gpr':     q_gas_mscf,
+                    'wpr':     0.0,
+                    'opt':     well_totals[well.name]['oil'],
+                    'gpt':     well_totals[well.name]['gas'],
+                    # Legacy keys still used by report_writer
+                    'oil':     q_oil_surf,
+                    'gas':     q_gas_mscf,
+                    'resv':    q_resv,
+                    'orat':    q_oil_surf,
+                    'grat':    q_gas_mscf,
+                    'cum_oil':      well_totals[well.name]['oil'],
+                    'cum_gas_prod': well_totals[well.name]['gas'],
+                    'cum_resv_prod':well_totals[well.name]['resv'],
+                    'cum_gas_inj':  0.0,
+                    'cum_resv_inj': 0.0,
+                }
+
+                field_rates['oil']  += q_oil_surf
+                field_rates['gas']  += q_gas_mscf
+                field_rates['FOPR'] += q_oil_surf
+                field_rates['FGPR'] += q_gas_mscf
                 field_rates['FPRV'] += q_resv
-                cum_totals['FOPT'] += well_data[well.name]['cum_oil']
-                cum_totals['FGPT'] += well_data[well.name]['cum_gas_prod']
-                cum_totals['FPRV_CUM'] += well_data[well.name]['cum_resv_prod']
-            else: 
-                field_rates['gas'] += abs(q_well)
-                field_rates['FGIR'] += q_gas
-                field_rates['FIRV'] += q_resv
-                cum_totals['FGIT'] += well_data[well.name]['cum_gas_inj']
+                
+                # Accrue cumulatives for field-level summary export
+                field_rates['FOPT'] += well_totals[well.name]['oil']
+                field_rates['FGPT'] += well_totals[well.name]['gas']
+                
+                cum_totals['FOPT']  += well_totals[well.name]['oil']
+                cum_totals['FGPT']  += well_totals[well.name]['gas']
+                cum_totals['FPRV_CUM'] += well_totals[well.name]['resv']
+
+            else:
+                # ── Injector: honour GIR gas injection target ─────────────
+                gir_target = well.gir if well.gir is not None else abs(well.rate)
+                bhp_ceil   = well.bhp if well.bhp is not None else 15000.0
+
+                # Use exact gas properties from fluid model (consistent with simulator.py)
+                bg, mu_g = model.fluid.get_gas_props(p_cell)
+                bg = float(bg); mu_g = float(mu_g)
+                
+                # Injection uses endpoint mobility (krg=1.0)
+                mob_g_inj = 1.0 / (mu_g * bg)
+                
+                dp_inj  = max(bhp_ceil - p_cell, 0.0)
+                q_inj_pot = wi * mob_g_inj * dp_inj       # MSCF/day (potential)
+
+                q_gir = min(q_inj_pot, gir_target)        # MSCF/day (actual)
+
+                well_totals[well.name]['gas'] += q_gir * step_dt_accum
+                well_totals[well.name].setdefault('resv', 0.0)
+                q_resv_inj = q_gir * bg                   # res bbl/day
+
+                well_data[well.name] = {
+                    'type':    'INJ',
+                    'i': w_idx[0] + 1, 'j': w_idx[1] + 1,
+                    'bhp':     bhp_ceil,
+                    'gir':     q_gir,
+                    'wir':     0.0,
+                    'git':     well_totals[well.name]['gas'],
+                    # Legacy keys
+                    'oil':     0.0,
+                    'gas':     q_gir,
+                    'resv':    q_resv_inj,
+                    'orat':    0.0,
+                    'grat':    q_gir,
+                    'cum_oil':      0.0,
+                    'cum_gas_prod': 0.0,
+                    'cum_resv_prod':0.0,
+                    'cum_gas_inj':  well_totals[well.name]['gas'],
+                    'cum_resv_inj': well_totals[well.name]['resv'],
+                }
+
+                field_rates['FGIR'] += q_gir
+                field_rates['FIRV'] += q_resv_inj
+                cum_totals['FGIT']  += well_data[well.name]['cum_gas_inj']
                 cum_totals['FIRV_CUM'] += well_data[well.name]['cum_resv_inj']
-            
+
         writer.write_restart(total_time, model.pressure, report_step, model.swat, model.sgas, dt=step_dt_accum)
         vals = writer.write_summary_data(total_time, model.pressure, model.swat, model.sgas, field_rates, well_data, report_step, write_seqhdr=(report_step==1))
         all_summary_results.append(vals)
@@ -204,13 +327,21 @@ if __name__ == "__main__":
         help="Path to the Eclipse .DATA file"
     )
     
+    parser.add_argument(
+        "-o", "--output-dir",
+        default=None,
+        help="Directory to save the simulation outputs"
+    )
+    
     args = parser.parse_args()
     
     # Priority: 1. Command-line argument, 2. Default sample file
     data_file = args.input_file
+    output_dir = args.output_dir
+    
     if not data_file:
         sample_path = "data/sample/sample_model.DATA"
         if os.path.exists(sample_path):
             data_file = sample_path
             
-    run_simulation(data_file)
+    run_simulation(data_file, output_dir)

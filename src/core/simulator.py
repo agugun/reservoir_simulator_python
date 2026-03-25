@@ -174,8 +174,10 @@ class Simulator:
         
         rho_o_surf = getattr(self.model.fluid, 'density_oil', 53.66)
         rho_g_surf = getattr(self.model.fluid, 'density_gas', 0.0533)
-        gam_o_3d = ((rho_o_surf + rs * rho_g_surf) / bo * 0.00694).reshape(grid.dimensions)
-        gam_g_3d = (rho_g_surf / bg * 0.00694).reshape(grid.dimensions)
+        # Unit conversion: 1 MSCF = 1000 SCF, 1 RB = 5.61458 ft3 -> 1000/5.61458 = 178.1076
+        f_surf = 1000.0 / 5.61458
+        gam_o_3d = ((rho_o_surf + rs * rho_g_surf * f_surf) / bo * 0.006944).reshape(grid.dimensions)
+        gam_g_3d = (rho_g_surf * f_surf / bg * 0.006944).reshape(grid.dimensions)
         
         flow_o = jnp.zeros_like(p_3d)
         flow_g = jnp.zeros_like(p_3d)
@@ -259,17 +261,29 @@ class Simulator:
             is_prod = (well.rate < 0) if well.rate else ('PROD' in well.name.upper())
             req_rate = abs(well.rate) if well.rate else 0.0
             
-            if well.bhp is not None:
-                q_pot = wi * lt_w * (p[w_idx] - well.bhp)
-                if well.rate is not None:
-                    q_tot = jnp.where(is_prod, jnp.clip(q_pot, 0, req_rate), jnp.clip(q_pot, -req_rate, 0))
-                else:
-                    q_tot = q_pot
-            else:
-                q_tot = req_rate if is_prod else -req_rate
-                
-            q_o = jnp.where(is_prod, q_tot * (lo_w / lt_w), 0.0)
-            q_free_g = jnp.where(is_prod, q_tot * (lg_w / lt_w), q_tot)
+            # Producer Logic: decoupled phase rates
+            q_pot_o = wi * lo_w * (p[w_idx] - well.bhp) if well.bhp is not None else 1e12
+            q_pot_g = wi * lg_w * (p[w_idx] - well.bhp) if well.bhp is not None else 0.0
+            
+            bo_w = bo[w_idx]
+            q_surf_o_pot = q_pot_o / bo_w
+            
+            # Rate limited if orat (req_rate) is exceeded
+            is_limited = (req_rate > 0) & (q_surf_o_pot > req_rate) & (q_surf_o_pot > 1e-6)
+            scaling = jnp.where(is_limited, req_rate / jnp.maximum(q_surf_o_pot, 1e-9), 1.0)
+            
+            # Final phase rates
+            q_o_prod = jnp.where(is_prod, q_surf_o_pot * scaling * bo_w, 0.0)
+            q_g_prod = jnp.where(is_prod, q_pot_g * scaling, 0.0)
+            
+            # Injector Logic (if not is_prod)
+            # q_pot_g_inj uses bh_inj - p_cell
+            q_pot_g_inj = wi * lg_w * (well.bhp - p[w_idx]) if well.bhp is not None else 1e12
+            q_g_inj_scaled = jnp.clip(q_pot_g_inj, 0, req_rate) if well.rate else q_pot_g_inj
+            
+            q_o = q_o_prod
+            q_free_g = jnp.where(is_prod, q_g_prod, -q_g_inj_scaled)
+            
             q_g = q_free_g + rs[w_idx] * q_o
             
             R_o = R_o.at[w_idx].add(q_o)
