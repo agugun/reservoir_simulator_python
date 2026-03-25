@@ -193,29 +193,32 @@ def run_simulation(data_file: str = None, output_dir: str = None):
                 bhp_floor = well.bhp if well.bhp is not None else 1000.0
                 dp        = max(p_cell - bhp_floor, 0.0)
 
-                # Potential reservoir rates (RB/day)
-                q_o_pot_resv = wi * lo_w * dp
-                q_g_pot_resv = wi * lg_w * dp
+                # lo_w = kro / (mu_o * Bo), so wi * lo_w * dp is already in STB/day
+                q_o_pot_stb = wi * lo_w * dp
+                # lg_w = krg / (mu_g * Bg), so wi * lg_w * dp is already in MSCF/day
+                q_g_pot_mscf = wi * lg_w * dp
                 
                 # Check for rate targets (ORAT)
                 orat_target = well.orat if well.orat is not None else 1e9
-                q_o_pot_surf = q_o_pot_resv / bo
                 
                 # Scale factor if we hit ORAT
-                scaling = min(1.0, orat_target / (q_o_pot_surf if q_o_pot_surf > 1e-6 else 1e9))
+                scaling = min(1.0, orat_target / (q_o_pot_stb if q_o_pot_stb > 1e-6 else 1e9))
                 
-                # Scaling factor is now for surface rate
-                q_oil_surf = q_o_pot_resv * scaling / bo
+                # Actual STB values
+                q_oil_surf = q_o_pot_stb * scaling
                 q_oil_resv = q_oil_surf * bo
                 
-                q_gas_mscf = (q_g_pot_resv * scaling) / bg + q_oil_surf * float(rs_cell)
+                # Correct reported gas rate (MSCF/day)
+                q_gas_mscf = q_g_pot_mscf * scaling + q_oil_surf * float(rs_cell)
                 
                 # Back-calculate actual BHP
                 lt_w = lo_w + lg_w
                 if wi > 1e-12 and lt_w > 1e-12:
-                    # q_tot_resv = q_oil_resv + q_gas_free_resv
-                    q_tot_resv = (q_o_pot_resv + q_g_pot_resv) * scaling
-                    bhp_actual = p_cell - q_tot_resv / (wi * lt_w)
+                    # q_tot_surf (STB+MSCF?? No, Reservoir Volume RB is what relates to BHP via WI)
+                    # q_res = WI * (lo + lg) * dp
+                    # so dp = q_res / (WI * (lo + lg))
+                    q_res = (q_o_pot_stb * bo + q_g_pot_mscf * bg) * scaling
+                    bhp_actual = p_cell - q_res / (wi * (kro_w / mu_o + krg_w / mu_g))
                 else:
                     bhp_actual = p_cell
                 bhp_actual = max(bhp_actual, bhp_floor)

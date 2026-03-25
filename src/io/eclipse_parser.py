@@ -81,12 +81,20 @@ class EclipseParser:
         # Get TOPS if present
         top_depth = None
         if 'TOPS' in self.deck:
-            tops_data = self.deck['TOPS'][0][0].get_raw_data_list()
-            # TOPS is usually only for the top layer (nx*ny) or all cells (nx*ny*nz)
-            if len(tops_data) == nx * ny:
-                top_depth = np.array(tops_data, dtype=np.float32).reshape((nx, ny, 1), order='F')
-            else:
-                top_depth = np.array(tops_data, dtype=np.float32).reshape((nx, ny, nz), order='F')
+            tops_data = np.array(self.deck['TOPS'][0][0].get_raw_data_list(), dtype=np.float32)
+            # Standard SPE1 has TOPS for top layer only.
+            # We must accumulate DZ to get top depths of all cells.
+            dz_3d = np.array(dz_data).reshape((nx, ny, nz), order='F')
+            top_3d = np.zeros((nx, ny, nz), dtype=np.float32)
+            
+            # Initial top from TOPS keyword (first layer)
+            top_3d[:, :, 0] = tops_data.reshape((nx, ny), order='F')
+            
+            # Layers 2...N: top[k] = top[k-1] + dz[k-1]
+            for k in range(1, nz):
+                top_3d[:, :, k] = top_3d[:, :, k-1] + dz_3d[:, :, k-1]
+            
+            top_depth = top_3d
         
         return Grid(nx, ny, nz, dx_data, dy_data, dz_data, actnum=actnum, top_depth=top_depth)
 

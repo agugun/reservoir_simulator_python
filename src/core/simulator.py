@@ -262,20 +262,18 @@ class Simulator:
             req_rate = abs(well.rate) if well.rate else 0.0
             
             # Producer Logic: decoupled phase rates
-            # Standard Potential: wi * (k/mu) * dp
-            q_pot_o_resv = wi * lo_w * (p[w_idx] - well.bhp) if well.bhp is not None else 1e12
-            q_pot_g_resv = wi * lg_w * (p[w_idx] - well.bhp) if well.bhp is not None else 0.0
-            
-            bo_w = bo[w_idx]
-            q_surf_o_pot = q_pot_o_resv / bo_w
+            # lo_w = kro / (mu_o * Bo), so wi * lo_w * dp is already in STB/day
+            q_o_pot_stb = wi * lo_w * (p[w_idx] - well.bhp) if well.bhp is not None else 1e12
+            # lg_w = krg / (mu_g * Bg), so wi * lg_w * dp is already in MSCF/day
+            q_g_pot_mscf = wi * lg_w * (p[w_idx] - well.bhp) if well.bhp is not None else 0.0
             
             # Rate limited if orat (req_rate) is exceeded
-            is_limited = (req_rate > 0) & (q_surf_o_pot > req_rate) & (q_surf_o_pot > 1e-6)
-            scaling = jnp.where(is_limited, req_rate / jnp.maximum(q_surf_o_pot, 1e-9), 1.0)
+            is_limited = (req_rate > 0) & (q_o_pot_stb > req_rate) & (q_o_pot_stb > 1e-6)
+            scaling = jnp.where(is_limited, req_rate / jnp.maximum(q_o_pot_stb, 1e-9), 1.0)
             
             # Final phase rates for R calculation
-            q_o_prod = jnp.where(is_prod, q_surf_o_pot * scaling, 0.0)
-            q_g_prod = jnp.where(is_prod, (q_pot_g_resv / bg[w_idx]) * scaling, 0.0)
+            q_o_prod = jnp.where(is_prod, q_o_pot_stb * scaling, 0.0)
+            q_g_prod = jnp.where(is_prod, q_g_pot_mscf * scaling, 0.0)
             
             # Injector Logic (if not is_prod)
             # Use endpoint mobility for injector (krg=1.0)
