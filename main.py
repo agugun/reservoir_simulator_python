@@ -75,7 +75,15 @@ def run_simulation(data_file: str = None, output_dir: str = None):
     
     all_summary_results = []
     
-    target_times = [1.0, 4.0, 11.60956, 31.0] + [31.0 + i*30.4375 for i in range(1, 120)]
+    # Monthly intervals for SPE1 (integer days to match ResInsight expectations)
+    month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    target_times = []
+    current_cum = 0.0
+    for year in range(10):
+        for days in month_days:
+            current_cum += days
+            target_times.append(float(current_cum))
+            
     report_step = 1
     
     total_time = 0.0
