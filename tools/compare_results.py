@@ -151,6 +151,7 @@ def figure1_time_series(opm: dict, py: dict, out_path: str):
         ("FGPR",  "Field Gas Production Rate",  "MSCF/day"),
         ("FOPT",  "Cum. Oil Production",         "STB"),
         ("FGPT",  "Cum. Gas Production",         "MSCF"),
+        ("WGIR:INJ", "Well Gas Injection Rate (INJ)", "MSCF/day"),
     ]
 
     # pick well-BHP key (prioritize producer)
@@ -158,13 +159,13 @@ def figure1_time_series(opm: dict, py: dict, out_path: str):
     if not bhp_key:
         bhp_key = next((k for k in opm if "WBHP" in k.upper()), None)
 
-    fig = plt.figure(figsize=(16, 10))
-    fig.suptitle("OPM Flow  vs  Python Simulator — Field Summary",
+    fig = plt.figure(figsize=(16, 12))
+    fig.suptitle("OPM Flow  vs  Python Simulator — Performance Dashboard",
                  fontsize=15, color=TEXT_COLOR, y=0.98, fontweight="bold")
 
-    ncols = 3 if bhp_key else 2
-    nrows = 2
-    gs = GridSpec(nrows, ncols, figure=fig, hspace=0.42, wspace=0.35)
+    ncols = 2
+    nrows = 3
+    gs = GridSpec(nrows, ncols, figure=fig, hspace=0.45, wspace=0.35)
 
     def _plot(ax, key, title, unit):
         t_o = opm.get("TIME", [])
@@ -178,13 +179,13 @@ def figure1_time_series(opm: dict, py: dict, out_path: str):
         ax.set_ylabel(unit, fontsize=9)
         ax.legend(fontsize=8)
 
-    positions = [(0,0),(0,1),(1,0),(1,1)]
+    positions = [(0,0),(0,1),(1,0),(1,1),(2,0)]
     for (r, c), (key, title, unit) in zip(positions, panels):
         ax = fig.add_subplot(gs[r, c])
         _plot(ax, key, title, unit)
 
     if bhp_key:
-        ax_bhp = fig.add_subplot(gs[:, 2])
+        ax_bhp = fig.add_subplot(gs[2, 1])
         t_o = opm.get("TIME", [])
         t_p = py.get("TIME", [])
         if bhp_key in opm:
@@ -192,7 +193,7 @@ def figure1_time_series(opm: dict, py: dict, out_path: str):
         py_bhp = next((k for k in py if "WBHP" in k), None)
         if py_bhp:
             ax_bhp.plot(t_p, py[py_bhp], color=PY_COLOR, lw=2, label="Python Sim", ls="--")
-        _ax_style(ax_bhp, f"Producer BHP  ({bhp_key})")
+        _ax_style(ax_bhp, f"Well BHP ({bhp_key})")
         ax_bhp.set_xlabel("Time  (days)", fontsize=9)
         ax_bhp.set_ylabel("psia", fontsize=9)
         ax_bhp.legend(fontsize=8)
