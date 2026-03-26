@@ -9,7 +9,9 @@ class PVDGTable:
         self.mu = jnp.array(data[2::3])
         
     def evaluate(self, p):
-        bg = jnp.interp(p, self.p, self.bg)
+        # Linearly interpolate Expansion Factor Eg = 1/Bg which is more linear with P
+        eg = jnp.interp(p, self.p, 1.0 / jnp.maximum(self.bg, 1e-12))
+        bg = 1.0 / jnp.maximum(eg, 1e-12)
         mu = jnp.interp(p, self.p, self.mu)
         return bg, mu
 

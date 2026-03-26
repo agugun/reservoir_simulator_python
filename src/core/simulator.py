@@ -220,13 +220,15 @@ class Simulator:
             def get_tvd(val_3d, up_mask):
                 v_up = jnp.where(up_mask, val_3d[:-1,:,:], val_3d[1:,:,:])
                 v_down = jnp.where(up_mask, val_3d[1:,:,:], val_3d[:-1,:,:])
-                # Up-upstream depends on direction and boundaries
-                v_ups_p = jnp.concatenate([jnp.expand_dims(val_3d[0,:,:], 0), val_3d[:-2,:,:]], axis=0) # for up=True
-                v_ups_m = jnp.concatenate([val_3d[2:,:,:], jnp.expand_dims(val_3d[-1,:,:], 0)], axis=0) # for up=False
+                # Up-upstream values: pad with boundary values to maintain 1st order at edges
+                v_ups_p = jnp.concatenate([jnp.expand_dims(val_3d[0,:,:], 0), val_3d[0:-2,:,:]], axis=0) 
+                v_ups_m = jnp.concatenate([val_3d[2:,:,:], jnp.expand_dims(val_3d[-1,:,:], 0)], axis=0) 
                 v_ups = jnp.where(up_mask, v_ups_p, v_ups_m)
                 
-                # Revert to standard Upwind for diagnostic
-                return v_up
+                # Flux Limiter
+                a = v_up - v_ups
+                b = v_down - v_up
+                return v_up + 0.5 * van_leer(a, b)
 
             lo_face = get_tvd(lam_o_3d, up_o)
             lg_face = get_tvd(lam_g_3d, up_g)
@@ -249,8 +251,11 @@ class Simulator:
             
             def get_tvd_y(val_3d, up_mask):
                 v_up = jnp.where(up_mask, val_3d[:,:-1,:], val_3d[:,1:,:])
-                # Revert to standard Upwind for diagnostic
-                return v_up
+                v_down = jnp.where(up_mask, val_3d[:,1:,:], val_3d[:,:-1,:])
+                v_ups_p = jnp.concatenate([jnp.expand_dims(val_3d[:,0,:], 1), val_3d[:,0:-2,:]], axis=1)
+                v_ups_m = jnp.concatenate([val_3d[:,2:,:], jnp.expand_dims(val_3d[:,-1,:], 1)], axis=1)
+                v_ups = jnp.where(up_mask, v_ups_p, v_ups_m)
+                return v_up + 0.5 * van_leer(v_up - v_ups, v_down - v_up)
 
             lo_face = get_tvd_y(lam_o_3d, up_o)
             lg_face = get_tvd_y(lam_g_3d, up_g)
@@ -273,8 +278,11 @@ class Simulator:
             
             def get_tvd_z(val_3d, up_mask):
                 v_up = jnp.where(up_mask, val_3d[:,:,:-1], val_3d[:,:,1:])
-                # Revert to standard Upwind for diagnostic
-                return v_up
+                v_down = jnp.where(up_mask, val_3d[:,:,1:], val_3d[:,:,:-1])
+                v_ups_p = jnp.concatenate([jnp.expand_dims(val_3d[:,:,0], 2), val_3d[:,:,0:-2]], axis=2)
+                v_ups_m = jnp.concatenate([val_3d[:,:,2:], jnp.expand_dims(val_3d[:,:,-1], 2)], axis=2)
+                v_ups = jnp.where(up_mask, v_ups_p, v_ups_m)
+                return v_up + 0.5 * van_leer(v_up - v_ups, v_down - v_up)
 
             lo_face = get_tvd_z(lam_o_3d, up_o)
             lg_face = get_tvd_z(lam_g_3d, up_g)
