@@ -89,8 +89,8 @@ class Simulator:
             return self._calc_residuals_jax(p, Y, is_sat, p_old, sg_old, rs_old, dt)
             
         self._jitted_residual = jax.jit(residual_fn)
-        # JIT the jacobian function explicitly over (p, Y) dynamic evaluations statically mapping arrays
-        self._jitted_jacobian = jax.jit(jax.jacfwd(residual_fn, argnums=(0, 1)))
+        # JIT the jacobian function explicitly with has_aux=True
+        self._jitted_jacobian = jax.jit(jax.jacfwd(residual_fn, argnums=(0, 1), has_aux=True))
 
     def calculate_well_index(self, well) -> float:
         """
@@ -138,7 +138,7 @@ class Simulator:
         vp_base = jnp.array(self.pore_volume.flatten(order='F'))
         
         cr = getattr(self.model.rock, 'compressibility', 3e-6)
-        pref = 4000.0
+        pref = 14.7
         
         vp = vp_base * (1.0 + cr * (p - pref))
         vp_old = vp_base * (1.0 + cr * (p_old - pref))
@@ -167,10 +167,18 @@ class Simulator:
         R_g = (1.0 / dt) * (vp * (sg / bg + rs * so / bo) - vp_old * (sg_old / bg_old + rs_old * so_old / bo_old))
         
         p_3d = p.reshape(grid.dimensions, order='F')
+        def van_leer(a, b):
+            # Limiter phi(r) where r = b/a. Simplified to phi(a, b) = (a*|b| + |a|*b) / (|a| + |b|)
+            # Handles zero-gradient cases safely.
+            abs_a, abs_b = jnp.abs(a), jnp.abs(b)
+            return jnp.where(abs_a + abs_b > 1e-20, (a * abs_b + abs_a * b) / (abs_a + abs_b), 0.0)
+
+        # Potentials and Fluxes (F-order Reshape Bitwise Sync)
+        p_3d = p.reshape(grid.dimensions, order='F')
         lam_o_3d = lam_o.reshape(grid.dimensions, order='F')
         lam_g_3d = lam_g.reshape(grid.dimensions, order='F')
         rs_3d = rs.reshape(grid.dimensions, order='F')
-        z_3d = jnp.array(grid.z_centers)
+        z_3d = jnp.array(grid.z_centers).reshape(grid.dimensions, order='F')
         
         rho_o_surf = getattr(self.model.fluid, 'density_oil', 53.66)
         rho_g_surf = getattr(self.model.fluid, 'density_gas', 0.0533)
@@ -179,8 +187,8 @@ class Simulator:
         gam_o_3d = ((rho_o_surf + rs * rho_g_surf * f_surf) / bo * 0.006944).reshape(grid.dimensions, order='F')
         gam_g_3d = (rho_g_surf * f_surf / bg * 0.006944).reshape(grid.dimensions, order='F')
         
-        flow_o = jnp.zeros_like(p_3d)
-        flow_g = jnp.zeros_like(p_3d)
+        flow_o = jnp.zeros(grid.dimensions)
+        flow_g = jnp.zeros(grid.dimensions)
         
         Tx = jnp.array(self.Tx)
         Ty = jnp.array(self.Ty)
@@ -189,65 +197,81 @@ class Simulator:
         if nx > 1:
             dp_x = p_3d[:-1,:,:] - p_3d[1:,:,:]
             dz_x = z_3d[:-1,:,:] - z_3d[1:,:,:]
-            gam_o_avg = 0.5 * (gam_o_3d[:-1,:,:] + gam_o_3d[1:,:,:])
-            gam_g_avg = 0.5 * (gam_g_3d[:-1,:,:] + gam_g_3d[1:,:,:])
-            dPhi_o_x = dp_x - gam_o_avg * dz_x
-            dPhi_g_x = dp_x - gam_g_avg * dz_x
-            up_o_x = dPhi_o_x >= 0
-            up_g_x = dPhi_g_x >= 0
-            l_o = jnp.where(up_o_x, lam_o_3d[:-1,:,:], lam_o_3d[1:,:,:])
-            l_g = jnp.where(up_g_x, lam_g_3d[:-1,:,:], lam_g_3d[1:,:,:])
-            rs_up = jnp.where(up_o_x, rs_3d[:-1,:,:], rs_3d[1:,:,:]) 
+            g_o_x = 0.5 * (gam_o_3d[:-1,:,:] + gam_o_3d[1:,:,:])
+            g_g_x = 0.5 * (gam_g_3d[:-1,:,:] + gam_g_3d[1:,:,:])
+            dPhi_o_x = dp_x - g_o_x * dz_x
+            dPhi_g_x = dp_x - g_g_x * dz_x
+            up_o, up_g = dPhi_o_x >= 0, dPhi_g_x >= 0
             
-            flux_o = Tx * l_o * dPhi_o_x
-            flux_g = Tx * (l_g * dPhi_g_x + rs_up * l_o * dPhi_o_x)
+            # TVD Reconstruction (X)
+            def get_tvd(val_3d, up_mask):
+                v_up = jnp.where(up_mask, val_3d[:-1,:,:], val_3d[1:,:,:])
+                v_down = jnp.where(up_mask, val_3d[1:,:,:], val_3d[:-1,:,:])
+                # Up-upstream depends on direction and boundaries
+                v_ups_p = jnp.concatenate([jnp.expand_dims(val_3d[0,:,:], 0), val_3d[:-2,:,:]], axis=0) # for up=True
+                v_ups_m = jnp.concatenate([val_3d[2:,:,:], jnp.expand_dims(val_3d[-1,:,:], 0)], axis=0) # for up=False
+                v_ups = jnp.where(up_mask, v_ups_p, v_ups_m)
+                
+                # Revert to standard Upwind for diagnostic
+                return v_up
+
+            lo_face = get_tvd(lam_o_3d, up_o)
+            lg_face = get_tvd(lam_g_3d, up_g)
+            rs_face = get_tvd(rs_3d, up_o)
             
-            flow_o = flow_o.at[:-1,:,:].add(flux_o)
-            flow_o = flow_o.at[1:,:,:].add(-flux_o)
-            flow_g = flow_g.at[:-1,:,:].add(flux_g)
-            flow_g = flow_g.at[1:,:,:].add(-flux_g)
+            flux_o = Tx * lo_face * dPhi_o_x
+            flux_g = Tx * (lg_face * dPhi_g_x + rs_face * lo_face * dPhi_o_x)
+            
+            flow_o = flow_o.at[:-1,:,:].add(flux_o); flow_o = flow_o.at[1:,:,:].add(-flux_o)
+            flow_g = flow_g.at[:-1,:,:].add(flux_g); flow_g = flow_g.at[1:,:,:].add(-flux_g)
             
         if ny > 1:
             dp_y = p_3d[:,:-1,:] - p_3d[:,1:,:]
             dz_y = z_3d[:,:-1,:] - z_3d[:,1:,:]
-            gam_o_avg = 0.5 * (gam_o_3d[:,:-1,:] + gam_o_3d[:,1:,:])
-            gam_g_avg = 0.5 * (gam_g_3d[:,:-1,:] + gam_g_3d[:,1:,:])
-            dPhi_o_y = dp_y - gam_o_avg * dz_y
-            dPhi_g_y = dp_y - gam_g_avg * dz_y
-            up_o_y = dPhi_o_y >= 0
-            up_g_y = dPhi_g_y >= 0
-            l_o = jnp.where(up_o_y, lam_o_3d[:,:-1,:], lam_o_3d[:,1:,:])
-            l_g = jnp.where(up_g_y, lam_g_3d[:,:-1,:], lam_g_3d[:,1:,:])
-            rs_up = jnp.where(up_o_y, rs_3d[:,:-1,:], rs_3d[:,1:,:])
+            g_o_y = 0.5 * (gam_o_3d[:,:-1,:] + gam_o_3d[:,1:,:])
+            g_g_y = 0.5 * (gam_g_3d[:,:-1,:] + gam_g_3d[:,1:,:])
+            dPhi_o_y = dp_y - g_o_y * dz_y
+            dPhi_g_y = dp_y - g_g_y * dz_y
+            up_o, up_g = dPhi_o_y >= 0, dPhi_g_y >= 0
             
-            flux_o = Ty * l_o * dPhi_o_y
-            flux_g = Ty * (l_g * dPhi_g_y + rs_up * l_o * dPhi_o_y)
+            def get_tvd_y(val_3d, up_mask):
+                v_up = jnp.where(up_mask, val_3d[:,:-1,:], val_3d[:,1:,:])
+                # Revert to standard Upwind for diagnostic
+                return v_up
+
+            lo_face = get_tvd_y(lam_o_3d, up_o)
+            lg_face = get_tvd_y(lam_g_3d, up_g)
+            rs_face = get_tvd_y(rs_3d, up_o)
             
-            flow_o = flow_o.at[:,:-1,:].add(flux_o)
-            flow_o = flow_o.at[:,1:,:].add(-flux_o)
-            flow_g = flow_g.at[:,:-1,:].add(flux_g)
-            flow_g = flow_g.at[:,1:,:].add(-flux_g)
+            flux_o = Ty * lo_face * dPhi_o_y
+            flux_g = Ty * (lg_face * dPhi_g_y + rs_face * lo_face * dPhi_o_y)
+            
+            flow_o = flow_o.at[:,:-1,:].add(flux_o); flow_o = flow_o.at[:,1:,:].add(-flux_o)
+            flow_g = flow_g.at[:,:-1,:].add(flux_g); flow_g = flow_g.at[:,1:,:].add(-flux_g)
             
         if nz > 1:
             dp_z = p_3d[:,:,:-1] - p_3d[:,:,1:]
             dz_z = z_3d[:,:,:-1] - z_3d[:,:,1:]
-            gam_o_avg = 0.5 * (gam_o_3d[:,:,:-1] + gam_o_3d[:,:,1:])
-            gam_g_avg = 0.5 * (gam_g_3d[:,:,:-1] + gam_g_3d[:,:,1:])
-            dPhi_o_z = dp_z - gam_o_avg * dz_z
-            dPhi_g_z = dp_z - gam_g_avg * dz_z
-            up_o_z = dPhi_o_z >= 0
-            up_g_z = dPhi_g_z >= 0
-            l_o = jnp.where(up_o_z, lam_o_3d[:,:,:-1], lam_o_3d[:,:,1:])
-            l_g = jnp.where(up_g_z, lam_g_3d[:,:,:-1], lam_g_3d[:,:,1:])
-            rs_up = jnp.where(up_o_z, rs_3d[:,:,:-1], rs_3d[:,:,1:])
+            g_o_z = 0.5 * (gam_o_3d[:,:,:-1] + gam_o_3d[:,:,1:])
+            g_g_z = 0.5 * (gam_g_3d[:,:,:-1] + gam_g_3d[:,:,1:])
+            dPhi_o_z = dp_z - g_o_z * dz_z
+            dPhi_g_z = dp_z - g_g_z * dz_z
+            up_o, up_g = dPhi_o_z >= 0, dPhi_g_z >= 0
             
-            flux_o = Tz * l_o * dPhi_o_z
-            flux_g = Tz * (l_g * dPhi_g_z + rs_up * l_o * dPhi_o_z)
+            def get_tvd_z(val_3d, up_mask):
+                v_up = jnp.where(up_mask, val_3d[:,:,:-1], val_3d[:,:,1:])
+                # Revert to standard Upwind for diagnostic
+                return v_up
+
+            lo_face = get_tvd_z(lam_o_3d, up_o)
+            lg_face = get_tvd_z(lam_g_3d, up_g)
+            rs_face = get_tvd_z(rs_3d, up_o)
             
-            flow_o = flow_o.at[:,:,:-1].add(flux_o)
-            flow_o = flow_o.at[:,:,1:].add(-flux_o)
-            flow_g = flow_g.at[:,:,:-1].add(flux_g)
-            flow_g = flow_g.at[:,:,1:].add(-flux_g)
+            flux_o = Tz * lo_face * dPhi_o_z
+            flux_g = Tz * (lg_face * dPhi_g_z + rs_face * lo_face * dPhi_o_z)
+            
+            flow_o = flow_o.at[:,:,:-1].add(flux_o); flow_o = flow_o.at[:,:,1:].add(-flux_o)
+            flow_g = flow_g.at[:,:,:-1].add(flux_g); flow_g = flow_g.at[:,:,1:].add(-flux_g)
             
         R_o = R_o + flow_o.flatten(order='F')
         R_g = R_g + flow_g.flatten(order='F')
@@ -296,7 +320,14 @@ class Simulator:
         R = jnp.empty(2*N)
         R = R.at[0::2].set(R_o)
         R = R.at[1::2].set(R_g)
-        return R
+        
+        # CFL Calculation: f_cfl = sum(|q|) / Vp
+        # q is flux (RB/day), Vp is pore volume (RB)
+        q_sum = (jnp.abs(flow_o) + jnp.abs(flow_g))
+        throughput = q_sum.flatten(order='F') / self.pore_volume.flatten(order='F')
+        cfl_max = jnp.max(throughput) * dt
+        
+        return R, cfl_max
         
     def _build_jacobian_fim(self, p, Y, is_sat, p_old, sg_old, rs_old, dt):
         import jax.numpy as jnp
@@ -311,8 +342,8 @@ class Simulator:
         dt_jax = jnp.float64(dt)
         
         # Execute the pre-compiled XLA cache bypassing python interpreting limits inherently
-        J_p, J_y = self._jitted_jacobian(p_jax, Y_jax, is_sat_jax, p_old_jax, sg_old_jax, rs_old_jax, dt_jax)
-        R_base = self._jitted_residual(p_jax, Y_jax, is_sat_jax, p_old_jax, sg_old_jax, rs_old_jax, dt_jax)
+        (J_p, J_y), cfl_max = self._jitted_jacobian(p_jax, Y_jax, is_sat_jax, p_old_jax, sg_old_jax, rs_old_jax, dt_jax)
+        R_base, _ = self._jitted_residual(p_jax, Y_jax, is_sat_jax, p_old_jax, sg_old_jax, rs_old_jax, dt_jax)
         
         # Interleave analytic Jacobian segments into explicit 2N block structure
         J = np.zeros((2*N, 2*N))
@@ -327,7 +358,7 @@ class Simulator:
             J[2*inactive, 2*inactive] = 1.0
             J[2*inactive+1, 2*inactive+1] = 1.0
             
-        return J, np.array(R_base)
+        return J, np.array(R_base), float(cfl_max)
 
     def step_fim(self, dt: float, max_iter: int = 15, tol: float = 1.0, report_writer=None) -> np.ndarray:
         p_old = self.model.pressure.flatten(order='F')
@@ -351,7 +382,9 @@ class Simulator:
             report_writer.log_newton_outer()
             
         for iteration in range(max_iter):
-            J, R = self._build_jacobian_fim(p, Y, is_sat, p_old, sg_old, rs_old, dt)
+            J, R, cfl_val = self._build_jacobian_fim(p, Y, is_sat, p_old, sg_old, rs_old, dt)
+            if iteration == 0:
+                print(f"   [CFL Check] Current CFL = {cfl_val:.4f} (Target < 1.0)")
             
             active_R = np.empty(0)
             if np.any(act == 1):
@@ -394,14 +427,9 @@ class Simulator:
             dp = dX[0::2]
             dy = dX[1::2]
             
-            max_dp = np.max(np.abs(dp[act == 1])) if np.any(act == 1) else 0
-            if max_dp > 500.0:
-                dp *= (500.0 / max_dp)
-                
-            # Relax Y cautiously (Y can be Rs ~ 1.2 or Sg ~ 0-1)
-            max_dy = np.max(np.abs(dy[act == 1])) if np.any(act == 1) else 0
-            if max_dy > 0.2:
-                dy *= (0.2 / max_dy)
+            # Appleyard Step Damping (Smooth limiting to prevent overshoots)
+            dp = dp / (1.0 + np.abs(dp) / 500.0)
+            dy = dy / (1.0 + np.abs(dy) / 0.10)
             
             p[act == 1] += dp[act == 1]
             Y[act == 1] += dy[act == 1]

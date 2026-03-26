@@ -55,11 +55,13 @@ class PVTOTable:
         slope_bo_rs = jnp.interp(rs, self.rs_arr, self.slopes_bo)
         slope_mu_rs = jnp.interp(rs, self.rs_arr, self.slopes_mu)
         
-        # Undersaturated correction
+        # Undersaturated correction (Exponential/Log-linear matching OPM)
         dp_under = jnp.maximum(0.0, p - pbub)
         
-        bo = bo_bub + slope_bo_rs * dp_under
-        mu = mu_bub + slope_mu_rs * dp_under
+        # bo = bo_bub * exp(c_o * dp_under) where c_o = slope / bo_bub
+        # For small x, exp(x) ~ 1 + x, matching linear if needed, but more accurate for large dp
+        bo = bo_bub * jnp.exp((slope_bo_rs / jnp.maximum(bo_bub, 1e-12)) * dp_under)
+        mu = mu_bub * jnp.exp((slope_mu_rs / jnp.maximum(mu_bub, 1e-12)) * dp_under)
         
         return bo, mu
 

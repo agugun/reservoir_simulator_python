@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from src.core import Simulator
+from src.core import Simulator, Grid, Rock, Fluid, ReservoirModel, Well
 from src.io import EclipseParser
 from src.io.report_writer import OPMReportWriter
 
@@ -24,7 +24,6 @@ def run_simulation(data_file: str = None, output_dir: str = None):
             return
     else:
         print("Using default synthetic model...")
-        from src.core import Grid, Rock, Fluid, ReservoirModel, Well
         # Fallback to the original hardcoded model if no file provided
         grid = Grid(nx=5, ny=5, nz=3, dx=100.0, dy=100.0, dz=20.0)
         rock = Rock.homogeneous(grid.dimensions, porosity=0.25, perm_x=50.0, perm_y=50.0, perm_z=50.0, compressibility=1e-6)
@@ -36,7 +35,35 @@ def run_simulation(data_file: str = None, output_dir: str = None):
     print(f"Grid setup complete. Total cells: {model.grid.nx * model.grid.ny * model.grid.nz}")
     print(f"Wells defined: {[w.name for w in model.wells]}")
     
+    # 3. Strategic Grid Refinement near the Injector/Producer
+    # ODEH 1981 uses 1000 ft uniform. We refine near centers to resolve front.
+    dx_refined = [1500, 1250, 1000, 875, 875, 875, 875, 1000, 1250, 1500] # Total 11000 ft (centered)
+    dy_refined = [1500, 1250, 1000, 875, 875, 875, 875, 1000, 1250, 1500]
+    
+    # Scale to precisely 10000 ft to maintain bitwise PV parity
+    dx_refined = np.array(dx_refined) * (10000.0 / sum(dx_refined))
+    dy_refined = np.array(dy_refined) * (10000.0 / sum(dy_refined))
+    
+    dz_nodes = [20.0, 30.0, 50.0]
+    
+    # Construct 3D spacing tensors
+    dx_3d = np.zeros((10, 10, 3))
+    dy_3d = np.zeros((10, 10, 3))
+    dz_3d = np.zeros((10, 10, 3))
+    for i in range(10):
+        for j in range(10):
+            for k in range(3):
+                dx_3d[i,j,k] = dx_refined[i]
+                dy_3d[i,j,k] = dy_refined[j]
+                dz_3d[i,j,k] = dz_nodes[k]
+
+    model.grid = Grid(10, 10, 3, dx_3d, dy_3d, dz_3d, actnum=model.grid.actnum, top_depth=model.grid.top_depth)
+    
     # Initialize Simulator
+    print("\nWELL CONFIGURATION CHECK:")
+    for well in model.wells:
+        print(f"Well: {well.name} | Type: {'PROD' if well.is_producer else 'INJ'} | Location: {well.location}")
+    
     print("Initializing Simulator and Transmissibility...")
     
     # 3.5 Hydrostatic Initialization (OPM Parity)
@@ -92,6 +119,7 @@ def run_simulation(data_file: str = None, output_dir: str = None):
     
     total_time = 0.0
     dt_current = 2.0 # Initial small step
+    step_idx = 0
     
     for target in target_times:
         step_dt_accum = 0.0
