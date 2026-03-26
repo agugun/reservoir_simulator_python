@@ -143,7 +143,8 @@ class Simulator:
         vp = vp_base * (1.0 + cr * (p - pref))
         vp_old = vp_base * (1.0 + cr * (p_old - pref))
         
-        sw_conn = 0.12
+        sw_conn = getattr(self.model.rock, 'sw_conn', 0.12)
+        krg_max = getattr(self.model.rock, 'krg_max', 1.0)
         so = jnp.clip(1.0 - sw_conn - sg, 0.0, 1.0)
         so_old = jnp.clip(1.0 - sw_conn - sg_old, 0.0, 1.0)
         
@@ -317,9 +318,15 @@ class Simulator:
             q_g_prod = jnp.where(is_prod, q_g_pot_mscf * scaling, 0.0)
             
             # Injector Logic (if not is_prod)
-            # Use endpoint mobility for injector (krg=1.0)
-            mob_g_inj = 1.0 / (mu_g[w_idx] * bg[w_idx])
-            q_pot_g_inj = wi * mob_g_inj * (well.bhp - p[w_idx]) if well.bhp is not None else 1e12
+            # Use constant-extrapolated mobility (krg_max) matching OPM/Eclipse default
+            mob_g_inj = krg_max / (mu_g[w_idx] * bg[w_idx])
+            
+            # Wellbore Hydrostatics: BHP_cell = BHP_target + 0.35 * (Z_cell - Z_datum)
+            z_datum = 8335.0 # SPE1 Standard Datum
+            z_cell = self.model.grid.z_centers.reshape((nx, ny, nz), order='F')[well.location]
+            bhp_cell = well.bhp + 0.35 * (z_cell - z_datum) if well.bhp is not None else 4500.0
+            
+            q_pot_g_inj = wi * mob_g_inj * (bhp_cell - p[w_idx]) if well.bhp is not None else 1e12
             q_g_inj_scaled = jnp.clip(q_pot_g_inj, 0, req_rate) if well.rate else q_pot_g_inj
             
             q_o = q_o_prod

@@ -12,7 +12,7 @@ For more information visit: https://opm-project.org
 Flow Version     =  2026.04-pre (Python JAX Engine Parity)
 Machine name     =  Python-VM
 Operating system =  Linux x86_64
-Simulation started on 26-03-2026 at 21:14:17 hrs
+Simulation started on 26-03-2026 at 22:02:12 hrs
 Using 1 Python processes with JAX Automatic Differentiation backend
 Parameters used by Flow:
 # [known parameters which were specified at run-time]

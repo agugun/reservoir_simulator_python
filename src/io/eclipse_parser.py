@@ -128,6 +128,7 @@ class EclipseParser:
             
         # Parse SGOF
         sgof_table = None
+        krg_max = 1.0 # Default fallback
         if 'SGOF' in self.deck:
             sgof_data = self.deck['SGOF'][0][0].get_raw_data_list()
             sgof_table = {
@@ -135,6 +136,13 @@ class EclipseParser:
                 'krg': np.array(sgof_data[1::4]),
                 'krog': np.array(sgof_data[2::4])
             }
+            krg_max = sgof_table['krg'][-1]
+        
+        # Parse SWOF
+        sw_conn = 0.12 # Default
+        if 'SWOF' in self.deck:
+            swof_data = self.deck['SWOF'][0][0].get_raw_data_list()
+            sw_conn = swof_data[0] # First value is Swc
             
         # Handle MULTZ (Transmissibility Multipliers in Z direction)
         # In this simplified implementation, we modify PERMZ directly to emulate MULTZ.
@@ -164,6 +172,8 @@ class EclipseParser:
 
         rock = Rock(poro, permx, permy, permz, compressibility)
         rock.sgof = sgof_table
+        rock.sw_conn = sw_conn
+        rock.krg_max = krg_max
         return rock
 
     def _parse_fluid(self) -> Fluid:
