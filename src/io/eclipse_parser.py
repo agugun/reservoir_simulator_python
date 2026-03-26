@@ -33,13 +33,27 @@ class EclipseParser:
         fluid = self._parse_fluid()
         
         # Initial pressure from SOLUTION section
-        pressure = self._parse_pressure(grid.dimensions)
-        rs = self._parse_rs(grid.dimensions)
+        pressure = self._parse_pressure(grid, fluid)
+        rs = self._parse_rs(grid)
         
+        # Start Date from SCHEDULE section
+        start_date = self._parse_start_date()
+
         # Wells from SCHEDULE section
         wells = self._parse_wells()
         
-        return ReservoirModel(grid, rock, fluid, pressure, wells=wells, rs=rs)
+        return ReservoirModel(grid, rock, fluid, pressure, wells=wells, rs=rs, start_date=start_date)
+
+    def _parse_start_date(self) -> str:
+        """Parses the START keyword to get simulation origin date."""
+        if 'START' in self.deck:
+            start_rec = self.deck['START'][0]
+            day = self._get_val(start_rec[0])
+            month = start_rec[1].get_str(0)
+            year = self._get_val(start_rec[2])
+            # Return standardized format: DD-MMM-YYYY
+            return f"{int(day):02d}-{month.upper()}-{int(year)}"
+        return "01-JAN-2015"
 
     def _get_val(self, item, index=0):
         """Helper to get value from DeckItem regardless of it being int, double, or UDA."""
@@ -122,6 +136,32 @@ class EclipseParser:
                 'krog': np.array(sgof_data[2::4])
             }
             
+        # Handle MULTZ (Transmissibility Multipliers in Z direction)
+        # In this simplified implementation, we modify PERMZ directly to emulate MULTZ.
+        if 'MULTZ' in self.deck:
+            for row in self.deck['MULTZ']:
+                try:
+                    # MULTZ: I1 I2 J1 J2 K1 K2 MULT
+                    # OPM Parser might group all items into the first item's data list
+                    items = row[0].get_raw_data_list()
+                    if len(items) < 7:
+                        print(f"Warning: MULTZ record has too few items ({len(items)})")
+                        continue
+                    
+                    i1 = int(items[0]) - 1
+                    i2 = int(items[1]) - 1
+                    j1 = int(items[2]) - 1
+                    j2 = int(items[3]) - 1
+                    k1 = int(items[4]) - 1
+                    k2 = int(items[5]) - 1
+                    mult = float(items[6])
+                    
+                    # Apply multiplier to the specified slice
+                    permz[i1:i2+1, j1:j2+1, k1:k2+1] *= mult
+                    print(f"Applied MULTZ {mult} to region [{i1+1}:{i2+1}, {j1+1}:{j2+1}, {k1+1}:{k2+1}]")
+                except Exception as e:
+                    print(f"Warning: Failed to parse MULTZ record: {e}")
+
         rock = Rock(poro, permx, permy, permz, compressibility)
         rock.sgof = sgof_table
         return rock
@@ -153,28 +193,46 @@ class EclipseParser:
             
         return Fluid(pvto_table, pvdg_table, oil_density, gas_density, compressibility)
 
-    def _parse_pressure(self, dims: tuple) -> np.ndarray:
+    def _parse_pressure(self, grid, fluid) -> np.ndarray:
         """Parses PRESSURE from SOLUTION section, with EQUIL fallback."""
+        dims = grid.dimensions
         if 'PRESSURE' in self.deck:
             p_data = self.deck['PRESSURE'][0][0].get_raw_data_list()
             return np.array(p_data).reshape(dims, order='F')
             
         if 'EQUIL' in self.deck:
-            # Item 2 is datum pressure
+            # Item 1: Datum Depth, Item 2: Datum Pressure
+            z_datum = self._get_val(self.deck['EQUIL'][0][0])
             p_datum = self._get_val(self.deck['EQUIL'][0][1])
-            return np.full(dims, p_datum)
+            
+            # Simple hydrostatic gradient from fluid density (lb/ft3 -> psi/ft)
+            # grad = density / 144
+            oil_grad = fluid.density_oil / 144.0
+            
+            # Calculate pressure for each cell based on its center depth
+            z_centers = grid.z_centers
+            p_init = p_datum + (z_centers - z_datum) * oil_grad
+            return p_init
             
         return np.full(dims, 3000.0)
 
-    def _parse_rs(self, dims: tuple) -> np.ndarray:
+    def _parse_rs(self, grid) -> np.ndarray:
         """Parses RS from SOLUTION section, with RSVD fallback."""
+        dims = grid.dimensions
         if 'RS' in self.deck:
             rs_data = self.deck['RS'][0][0].get_raw_data_list()
             return np.array(rs_data).reshape(dims, order='F')
             
         if 'RSVD' in self.deck:
-            rs_val = float(self.deck['RSVD'][0][0].get_raw_data_list()[1])
-            return np.full(dims, rs_val)
+            # RSVD table: each row [Depth, Rs]
+            rsvd_raw = self.deck['RSVD'][0][0].get_raw_data_list()
+            # Convert flat list [z1, rs1, z2, rs2, ...] to depth and rs arrays
+            z_rsvd = np.array(rsvd_raw[0::2])
+            rs_rsvd = np.array(rsvd_raw[1::2])
+            
+            z_centers = grid.z_centers
+            # Interpolate Rs based on cell center depth
+            return np.interp(z_centers, z_rsvd, rs_rsvd)
             
         return np.zeros(dims)
 
@@ -201,6 +259,18 @@ class EclipseParser:
                     # SPE1: PROD at 10 10 3 3 ... -> i=9, j=9, k_top=2
                     k_top = int(self._get_val(row[3])) - 1
                     specs[name][2] = k_top
+                    
+                    # Read SKIN if available (Item 9, column 8)
+                    try:
+                        if len(row) > 8:
+                            skin_val = float(self._get_val(row[8]))
+                            # Store skin in specs to pass to Well constructor
+                            if len(specs[name]) < 4:
+                                specs[name].append(skin_val)
+                            else:
+                                specs[name][3] = skin_val
+                    except Exception:
+                        pass
 
         # 3. Production control (WCONPROD)
         # WCONPROD columns: Name, Status, Control, ORAT, WRAT, GRAT, LRAT, RESV, BHP
@@ -238,9 +308,12 @@ class EclipseParser:
                 # The `rate` in Well is the negative ORAT (for legacy backward compat)
                 rate = -orat if orat else 0.0
 
-                wells.append(Well(name, tuple(specs[name]),
+                # Read skin if stored in specs
+                skin = specs[name][3] if len(specs[name]) > 3 else 0.0
+                
+                wells.append(Well(name, tuple(specs[name][:3]),
                                   rate=rate, bhp=bhp_min,
-                                  orat=orat, grat=grat))
+                                  orat=orat, grat=grat, skin=skin))
 
         # WCONINJE: Name, Type, Status, Control, Rate, ResV, BHP
         if 'WCONINJE' in self.deck:
@@ -275,7 +348,10 @@ class EclipseParser:
                 except Exception:
                     pass
 
-                wells.append(Well(name, tuple(specs[name]),
-                                  rate=rate, bhp=bhp_max, gir=gir))
+                # Read skin if stored in specs
+                skin = specs[name][3] if len(specs[name]) > 3 else 0.0
+
+                wells.append(Well(name, tuple(specs[name][:3]),
+                                  rate=rate, bhp=bhp_max, gir=gir, skin=skin))
 
         return wells

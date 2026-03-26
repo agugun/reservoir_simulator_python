@@ -24,7 +24,9 @@ import matplotlib
 matplotlib.use("Agg")  # headless-safe
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
+from datetime import datetime, timedelta
 
 # ── colour palette ─────────────────────────────────────────────────────────────
 OPM_COLOR    = "#E63946"   # vibrant red
@@ -62,6 +64,13 @@ def _find_case(directory: str) -> str:
     raise FileNotFoundError(f"No .SMSPEC found in {directory}")
 
 
+def _get_dates(days_array, start_date):
+    """Convert a numpy array of days into datetime objects."""
+    if start_date is None:
+        start_date = datetime(2015, 1, 1) # Default fallback
+    return [start_date + timedelta(days=float(d)) for d in days_array]
+
+
 def load_summary(directory: str) -> dict:
     """Load all available time-series vectors from a SMSPEC+UNSMRY pair."""
     from resdata.summary import Summary
@@ -97,6 +106,12 @@ def load_summary(directory: str) -> dict:
     if "FGPT" not in vectors and "FGPR" in vectors and len(days) > 1:
         fgpr = vectors["FGPR"]
         vectors["FGPT"] = np.array([np.trapezoid(fgpr[:i+1], days[:i+1]) for i in range(len(days))])
+
+    # Start date extraction
+    try:
+        vectors["START_DATE"] = sm.start_date
+    except Exception:
+        vectors["START_DATE"] = None
 
     return vectors
 
@@ -159,46 +174,67 @@ def figure1_time_series(opm: dict, py: dict, out_path: str):
     if not bhp_key:
         bhp_key = next((k for k in opm if "WBHP" in k.upper()), None)
 
-    fig = plt.figure(figsize=(16, 12))
+    fig = plt.figure(figsize=(14, 4 * (len(panels) + (1 if bhp_key else 0))))
     fig.suptitle("OPM Flow  vs  Python Simulator — Performance Dashboard",
-                 fontsize=15, color=TEXT_COLOR, y=0.98, fontweight="bold")
+                 fontsize=15, color=TEXT_COLOR, y=0.99, fontweight="bold")
 
-    ncols = 2
-    nrows = 3
-    gs = GridSpec(nrows, ncols, figure=fig, hspace=0.45, wspace=0.35)
+    ncols = 1
+    nrows = len(panels) + (1 if bhp_key else 0)
+    gs = GridSpec(nrows, ncols, figure=fig, hspace=0.6)
 
     def _plot(ax, key, title, unit):
         t_o = opm.get("TIME", [])
         t_p = py.get("TIME", [])
+        
+        # Convert to dates
+        d_o = _get_dates(t_o, opm.get("START_DATE"))
+        d_p = _get_dates(t_p, py.get("START_DATE"))
+        
         if key in opm:
-            ax.plot(t_o, opm[key], color=OPM_COLOR,  lw=2, label="OPM Flow")
+            ax.plot(d_o, opm[key], color=OPM_COLOR,  lw=2, label="OPM Flow")
         if key in py:
-            ax.plot(t_p, py[key],  color=PY_COLOR,   lw=2, label="Python Sim", ls="--")
+            ax.plot(d_p, py[key],  color=PY_COLOR,   lw=2, label="Python Sim", ls="--")
+        
         _ax_style(ax, title)
-        ax.set_xlabel("Time  (days)", fontsize=9)
+        ax.set_xlabel("Date", fontsize=9)
         ax.set_ylabel(unit, fontsize=9)
         ax.legend(fontsize=8)
+        
+        # Format X-Axis as Months/Years
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+        # Minor locator for months
+        ax.xaxis.set_minor_locator(mdates.MonthLocator(interval=3))
+        ax.tick_params(axis='x', rotation=30)
 
-    positions = [(0,0),(0,1),(1,0),(1,1),(2,0)]
-    for (r, c), (key, title, unit) in zip(positions, panels):
-        ax = fig.add_subplot(gs[r, c])
+    for i, (key, title, unit) in enumerate(panels):
+        ax = fig.add_subplot(gs[i, 0])
         _plot(ax, key, title, unit)
 
     if bhp_key:
-        ax_bhp = fig.add_subplot(gs[2, 1])
+        ax_bhp = fig.add_subplot(gs[nrows-1, 0])
         t_o = opm.get("TIME", [])
         t_p = py.get("TIME", [])
+        d_o = _get_dates(t_o, opm.get("START_DATE"))
+        d_p = _get_dates(t_p, py.get("START_DATE"))
+        
         if bhp_key in opm:
-            ax_bhp.plot(t_o, opm[bhp_key], color=OPM_COLOR, lw=2, label="OPM Flow")
+            ax_bhp.plot(d_o, opm[bhp_key], color=OPM_COLOR, lw=2, label="OPM Flow")
         py_bhp = next((k for k in py if "WBHP:PROD" in k.upper()), None)
         if not py_bhp:
             py_bhp = next((k for k in py if "WBHP" in k), None)
         if py_bhp:
-            ax_bhp.plot(t_p, py[py_bhp], color=PY_COLOR, lw=2, label="Python Sim", ls="--")
+            ax_bhp.plot(d_p, py[py_bhp], color=PY_COLOR, lw=2, label="Python Sim", ls="--")
+        
         _ax_style(ax_bhp, f"Well BHP ({bhp_key})")
-        ax_bhp.set_xlabel("Time  (days)", fontsize=9)
+        ax_bhp.set_xlabel("Date", fontsize=9)
         ax_bhp.set_ylabel("psia", fontsize=9)
         ax_bhp.legend(fontsize=8)
+        
+        ax_bhp.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax_bhp.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+        ax_bhp.xaxis.set_minor_locator(mdates.MonthLocator(interval=3))
+        ax_bhp.tick_params(axis='x', rotation=30)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG_COLOR)
     plt.close(fig)
@@ -332,18 +368,27 @@ def figure4_divergence(opm: dict, py: dict, out_path: str):
         if len(t_o) > 0 and len(t_p) > 0 and len(o_v) > 0 and len(p_v) > 0:
             p_interp = np.interp(t_o, t_p, p_v)
             with np.errstate(divide="ignore", invalid="ignore"):
-                pct = np.where(o_v > 1e-6, 100.0 * (p_interp - o_v) / o_v, 0.0)
-            ax.fill_between(t_o, pct, 0,
+                # Use a threshold (e.g., 10 STB/MSCF) to avoid numerical noise at t=0
+                threshold = 10.0
+                pct = np.where(o_v > threshold, 100.0 * (p_interp - o_v) / o_v, 0.0)
+            
+            d_o = _get_dates(t_o, opm.get("START_DATE"))
+            ax.fill_between(d_o, pct, 0,
                             where=(pct >= 0), color=PY_COLOR, alpha=0.4, label="Python > OPM")
-            ax.fill_between(t_o, pct, 0,
+            ax.fill_between(d_o, pct, 0,
                             where=(pct < 0),  color=OPM_COLOR, alpha=0.4, label="Python < OPM")
-            ax.plot(t_o, pct, color=TEXT_COLOR, lw=1.2)
+            ax.plot(d_o, pct, color=TEXT_COLOR, lw=1.2)
             ax.axhline(0, color=GRID_COLOR, lw=1)
 
         _ax_style(ax, f"{label}  —  % Divergence  (Py − OPM) / OPM")
-        ax.set_xlabel("Time  (days)", fontsize=9)
+        ax.set_xlabel("Date", fontsize=9)
         ax.set_ylabel("Relative error  (%)", fontsize=9)
         ax.legend(fontsize=8)
+        
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+        ax.xaxis.set_minor_locator(mdates.MonthLocator(interval=3))
+        ax.tick_params(axis='x', rotation=30)
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG_COLOR)
     plt.close(fig)
