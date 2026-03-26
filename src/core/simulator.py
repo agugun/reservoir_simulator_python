@@ -120,9 +120,9 @@ class Simulator:
         ro = 0.28 * num / den
         
         # WI = 2 * pi * k * h / (ln(ro/rw) + skin)
-        # Using conversion factor 0.001127 for Darcy's law in field units
+        # Using conversion factor 0.00708 for field units (1.127e-3 * 2 * pi)
         k_eff = np.sqrt(kx * ky)
-        wi = (2 * np.pi * 0.001127 * k_eff * dz) / (np.log(ro / well.well_radius) + well.skin)
+        wi = (0.00708 * k_eff * dz) / (np.log(ro / well.well_radius) + well.skin)
         
         return max(0.0, float(wi))
     def _calc_residuals_jax(self, p, Y, is_sat, p_old, sg_old, rs_old, dt):
@@ -182,10 +182,22 @@ class Simulator:
         
         rho_o_surf = getattr(self.model.fluid, 'density_oil', 53.66)
         rho_g_surf = getattr(self.model.fluid, 'density_gas', 0.0533)
-        # Unit conversion: 1 MSCF = 1000 SCF, 1 RB = 5.61458 ft3 -> 1000/5.61458 = 178.1076
-        f_surf = 1000.0 / 5.61458
-        gam_o_3d = ((rho_o_surf + rs * rho_g_surf * f_surf) / bo * 0.006944).reshape(grid.dimensions, order='F')
-        gam_g_3d = (rho_g_surf * f_surf / bg * 0.006944).reshape(grid.dimensions, order='F')
+        
+        # Unit conversion constants
+        BBL_TO_FT3 = 5.61458
+        MSCF_TO_SCF = 1000.0
+        PSI_PER_PSI = 1.0/144.0 # lb/ft2 to psi
+        
+        # Density (lb/RB) = Mass (lb) / Volume (RB)
+        # Weight of 1 STB of saturated oil (lb/STB) = (rho_o_surf * BBL_TO_FT3) + (rs * MSCF_TO_SCF * rho_g_surf)
+        # Weight of 1 MSCF of gas (lb/MSCF) = MSCF_TO_SCF * rho_g_surf
+        rho_o_res = (rho_o_surf * BBL_TO_FT3 + rs * MSCF_TO_SCF * rho_g_surf) / bo
+        rho_g_res = (MSCF_TO_SCF * rho_g_surf) / bg
+        
+        # Gradient (psi/ft) = (Density [lb/RB] / BBL_TO_FT3) * PSI_PER_PSI
+        grad_factor = 1.0 / (BBL_TO_FT3 * 144.0)
+        gam_o_3d = (rho_o_res * grad_factor).reshape(grid.dimensions, order='F')
+        gam_g_3d = (rho_g_res * grad_factor).reshape(grid.dimensions, order='F')
         
         flow_o = jnp.zeros(grid.dimensions)
         flow_g = jnp.zeros(grid.dimensions)
@@ -286,10 +298,15 @@ class Simulator:
             req_rate = abs(well.rate) if well.rate else 0.0
             
             # Producer Logic: decoupled phase rates
-            # lo_w = kro / (mu_o * Bo), so wi * lo_w * dp is already in STB/day
-            q_o_pot_stb = wi * lo_w * (p[w_idx] - well.bhp) if well.bhp is not None else 1e12
-            # lg_w = krg / (mu_g * Bg), so wi * lg_w * dp is already in MSCF/day
-            q_g_pot_mscf = wi * lg_w * (p[w_idx] - well.bhp) if well.bhp is not None else 0.0
+            # 1. Oil Production: Q_o = WI * lo_w * (P_cell - BHP_cell) [STB/day]
+            # Wellbore Hydrostatics: BHP_cell = BHP_target + 0.35 * (Z_cell - Z_datum)
+            z_datum = 8335.0 # SPE1 Standard Datum
+            p_cell_3d = p.reshape((nx, ny, nz), order='F')
+            z_cell = self.model.grid.z_centers.reshape((nx, ny, nz), order='F')[well.location]
+            bhp_cell = well.bhp + 0.35 * (z_cell - z_datum) if well.bhp is not None else 1000.0
+            
+            q_o_pot_stb = wi * lo_w * (p[w_idx] - bhp_cell) if well.bhp is not None else 1e12
+            q_g_pot_mscf = wi * lg_w * (p[w_idx] - bhp_cell) if well.bhp is not None else 0.0
             
             # Rate limited if orat (req_rate) is exceeded
             is_limited = (req_rate > 0) & (q_o_pot_stb > req_rate) & (q_o_pot_stb > 1e-6)
@@ -307,7 +324,6 @@ class Simulator:
             
             q_o = q_o_prod
             q_free_g = jnp.where(is_prod, q_g_prod, -q_g_inj_scaled)
-            
             q_g = q_free_g + rs[w_idx] * q_o
             
             R_o = R_o.at[w_idx].add(q_o)
@@ -428,20 +444,29 @@ class Simulator:
             dy = dX[1::2]
             
             # Appleyard Step Damping (Smooth limiting to prevent overshoots)
+            # dp_max = 500 psi, dy_max (ds) = 0.05 (5% saturation)
             dp = dp / (1.0 + np.abs(dp) / 500.0)
-            dy = dy / (1.0 + np.abs(dy) / 0.10)
+            dy = dy / (1.0 + np.abs(dy) / 0.05)
             
             p[act == 1] += dp[act == 1]
             Y[act == 1] += dy[act == 1]
             
             # Post-iteration State Switching Evaluation
+            import jax.numpy as jnp
             rsat = self.model.fluid.get_rsat(p)
             
             # Undersaturated dropping below bubble point?
             to_sat = (~is_sat) & (Y >= rsat) & (act == 1)
             if np.any(to_sat):
+                # Mass-Conforming Switching:
+                # S_g = 0.88 * (R_s_old - R_sat) * B_g / B_o
+                bo, _ = self.model.fluid.get_oil_props(p, rsat)
+                bg, _ = self.model.fluid.get_gas_props(p)
+                delta_rs = (Y - rsat)
+                sg_init = jnp.clip(0.88 * delta_rs * (bg / bo), 1e-5, 0.10)
+                
                 is_sat[to_sat] = True
-                Y[to_sat] = 1e-4
+                Y[to_sat] = sg_init[to_sat]
                 
             # Saturated gas vanishes?
             to_und = is_sat & (Y < 0.0) & (act == 1)

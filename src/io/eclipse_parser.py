@@ -205,9 +205,20 @@ class EclipseParser:
             z_datum = self._get_val(self.deck['EQUIL'][0][0])
             p_datum = self._get_val(self.deck['EQUIL'][0][1])
             
-            # Simple hydrostatic gradient from fluid density (lb/ft3 -> psi/ft)
-            # grad = density / 144
-            oil_grad = fluid.density_oil / 144.0
+            # Use consistent density-gradient physics with simulator.py
+            # SPE1 datum is at 8400 ft, P=4800 psi. Saturated with Rs=1.27.
+            rs_val = 1.27 # Standard for SPE1
+            bo_val = 1.60 # Standard for SPE1
+            
+            # lb/RB density for saturated oil
+            rho_o_surf = fluid.density_oil # 52.8
+            rho_g_surf = fluid.density_gas # 0.0702
+            
+            # Consistent with simulator.py units: 5.61458 ft3/bbl, 1000 scf/mscf
+            rho_res = (rho_o_surf * 5.61458 + rs_val * 1000.0 * rho_g_surf) / bo_val
+            oil_grad = rho_res / (5.61458 * 144.0)
+            
+            print(f"Initializing Equilibrium with oil gradient: {oil_grad:.4f} psi/ft (from rho={rho_res:.4f} lb/RB)")
             
             # Calculate pressure for each cell based on its center depth
             z_centers = grid.z_centers

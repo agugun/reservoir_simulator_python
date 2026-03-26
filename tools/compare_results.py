@@ -7,8 +7,8 @@ Usage:
 
 Defaults:
     --opm-dir   comparison/opm_run/
-    --py-dir    data/sample/
-    --output-dir tools/output/
+    --py-dir    comparison/results/
+    --output-dir comparison/figures_auto/
 
 Produces 3 saved figures:
     fig1_time_series.png   — Field summary quantities (FOPR, FGPR, FOPT, BHP)

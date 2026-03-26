@@ -1,0 +1,14 @@
+Compiling JAX XLA Graphs for O(1) step execution...
+--- INIT ---
+Oil: 280,368,780.99 STB
+Gas: 356,068,351.86 MSCF
+   [CFL Check] Current CFL = 0.6359 (Target < 1.0)
+Traceback (most recent call last):
+  File "/home/gugun/repo/reservoir_simulation/tools/debug_mass_balance.py", line 86, in <module>
+    debug_mass()
+  File "/home/gugun/repo/reservoir_simulation/tools/debug_mass_balance.py", line 37, in debug_mass
+    model.pressure = sim.step_fim(dt)
+                     ^^^^^^^^^^^^^^^^
+  File "/home/gugun/repo/reservoir_simulation/src/core/simulator.py", line 468, in step_fim
+    raise RuntimeError(f"FIM Newton Solver divergence after {max_iter} iterations (Residual: {error:.4f})")
+RuntimeError: FIM Newton Solver divergence after 15 iterations (Residual: 50.0770)
