@@ -65,12 +65,24 @@ def calculate_snapshot(model, sim, well_totals, step_dt_accum):
                 bhp_actual = p_cell
             bhp_actual = max(bhp_actual, bhp_floor)
 
-            well_totals[well.name]['oil'] += q_oil_surf * step_dt_accum
-            well_totals[well.name]['gas'] += q_gas_mscf * step_dt_accum
+            # Trapezoidal Integration Logic
+            if step_dt_accum > 0:
+                q_o_avg = 0.5 * (well_totals[well.name].get('last_q_oil', q_oil_surf) + q_oil_surf)
+                q_g_avg = 0.5 * (well_totals[well.name].get('last_q_gas', q_gas_mscf) + q_gas_mscf)
+                well_totals[well.name]['oil'] += q_o_avg * step_dt_accum
+                well_totals[well.name]['gas'] += q_g_avg * step_dt_accum
+            
+            well_totals[well.name]['last_q_oil'] = q_oil_surf
+            well_totals[well.name]['last_q_gas'] = q_gas_mscf
+            
             well_totals[well.name].setdefault('resv', 0.0)
             q_free_gas_mscf = q_gas_mscf - q_oil_surf * float(rs_cell)
             q_resv = q_oil_resv + q_free_gas_mscf * bg
-            well_totals[well.name]['resv'] += q_resv * step_dt_accum
+            
+            if step_dt_accum > 0:
+                q_r_avg = 0.5 * (well_totals[well.name].get('last_q_resv', q_resv) + q_resv)
+                well_totals[well.name]['resv'] += q_r_avg * step_dt_accum
+            well_totals[well.name]['last_q_resv'] = q_resv
 
             well_data[well.name] = {
                 'type': 'PROD', 'i': w_idx[0] + 1, 'j': w_idx[1] + 1, 'bhp': bhp_actual,
@@ -99,13 +111,21 @@ def calculate_snapshot(model, sim, well_totals, step_dt_accum):
             bg = float(bg); mu_g = float(mu_g)
             mob_g_inj = 1.0 / (mu_g * bg)
             dp_inj = max(bhp_ceil - p_cell, 0.0)
-            q_inj_pot = wi * mob_g_inj * dp_inj
-            q_gir = min(q_inj_pot, gir_target)
+            
+            # Injector logic refinement
+            q_gir = min(wi * mob_g_inj * dp_inj, gir_target)
 
-            well_totals[well.name]['gas'] += q_gir * step_dt_accum
+            if step_dt_accum > 0:
+                q_g_avg = 0.5 * (well_totals[well.name].get('last_q_gas', q_gir) + q_gir)
+                well_totals[well.name]['gas'] += q_g_avg * step_dt_accum
+            well_totals[well.name]['last_q_gas'] = q_gir
+            
             well_totals[well.name].setdefault('resv', 0.0)
             q_resv_inj = q_gir * bg
-            well_totals[well.name]['resv'] += q_resv_inj * step_dt_accum
+            if step_dt_accum > 0:
+                q_r_avg = 0.5 * (well_totals[well.name].get('last_q_resv', q_resv_inj) + q_resv_inj)
+                well_totals[well.name]['resv'] += q_r_avg * step_dt_accum
+            well_totals[well.name]['last_q_resv'] = q_resv_inj
 
             well_data[well.name] = {
                 'type': 'INJ', 'i': w_idx[0] + 1, 'j': w_idx[1] + 1, 'bhp': bhp_ceil,
@@ -120,6 +140,7 @@ def calculate_snapshot(model, sim, well_totals, step_dt_accum):
             cum_totals['FIRV_CUM'] += well_data[well.name]['cum_resv_inj']
 
     return well_data, field_rates, cum_totals
+
 
 def run_simulation(data_file: str = None, output_dir: str = None, refine: bool = False, compare: bool = False, ref_dir: str = None, num_steps: int = 120):
     """
@@ -218,22 +239,27 @@ def run_simulation(data_file: str = None, output_dir: str = None, refine: bool =
         # Initial step (Time 0)
         writer.write_restart(0.0, model.pressure, 0, model.swat, model.sgas, dt=0.0)
         
+        # Simulation Parameters with rate history for Trapezoidal integration
+        well_totals = {w.name: {
+            'oil': 0.0, 'gas': 0.0, 'resv': 0.0,
+            'last_q_oil': 0.0, 'last_q_gas': 0.0, 'last_q_resv': 0.0
+        } for w in model.wells}
+
         # Write initial summary record (T=0) for proper interpolation
-        # Use initial potential rates, but 0 cumulatives
-        dummy_totals = {w.name: {'oil': 0.0, 'gas': 0.0, 'resv': 0.0} for w in model.wells}
-        init_well_data, init_field_rates, _ = calculate_snapshot(model, sim, dummy_totals, 0.0)
+        # This call populates well_totals[...]['last_q_...'] for subsequent steps
+        init_well_data, init_field_rates, _ = calculate_snapshot(model, sim, well_totals, 0.0)
         writer.write_summary_data(0.0, model.pressure, model.swat, model.sgas, init_field_rates, init_well_data, 0, write_seqhdr=True)
-    
-    # Simulation Parameters
-    well_totals = {w.name: {'oil': 0.0, 'gas': 0.0} for w in model.wells}
     
     print(f"\nStarting Final Parity Simulation (Adaptive {num_steps} target steps):")
     
     all_summary_results = []
     
+    # Target times with Refined Start-up (Warm-up steps matching OPM behavior)
+    warm_up_times = [1.0, 4.0, 11.0, 20.0]
+    target_times = [t for t in warm_up_times]
+
     # Monthly intervals for SPE1 (integer days to match ResInsight expectations)
     month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    target_times = []
     
     # Calculate steps per month based on num_steps
     # Total nominal steps is 120 (10 years * 12 months)
@@ -245,10 +271,13 @@ def run_simulation(data_file: str = None, output_dir: str = None, refine: bool =
             # Sub-divide each month into steps_per_month segments
             for k in range(1, steps_per_month + 1):
                 sub_step_time = current_cum + (days * k / steps_per_month)
-                target_times.append(float(sub_step_time))
+                # Only add if we haven't already covered this time in warm-up
+                if sub_step_time > target_times[-1]:
+                    target_times.append(float(sub_step_time))
             current_cum += days
             
     report_step = 1
+
     
     total_time = 0.0
     dt_current = 2.0 # Initial small step
@@ -382,8 +411,8 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--ref-dir",
-        default="comparison/opm_run/",
-        help="Reference OPM directory for comparison"
+        default="tests/ref/",
+        help="Default reference OPM directory for comparison"
     )
     
     parser.add_argument(
@@ -410,8 +439,8 @@ if __name__ == "__main__":
         scenario = args.scenario.lower()
         print(f"Scenario-Based Execution Mode: '{scenario}'")
         
-        # 1. Resolve Data File
-        data_dir = "data/sample/"
+        # 1. Resolve Data File (Strictly from tests/run/)
+        data_dir = f"tests/run/{scenario}/"
         found_data = False
         if os.path.exists(data_dir):
             for f in os.listdir(data_dir):
@@ -426,13 +455,13 @@ if __name__ == "__main__":
         # 2. Resolve Paths
         output_dir = f"tests/run/{scenario}/"
         ref_dir = f"tests/ref/{scenario}/"
+        print(f"  → Loading model: {data_file}")
         print(f"  → Output: {output_dir}")
         print(f"  → Reference: {ref_dir}")
         
-    # Priority: 1. Command-line argument, 2. Scenario Resolution, 3. Default sample file
+    # Validation
     if not data_file:
-        sample_path = "data/sample/SPE1CASE1.DATA"
-        if os.path.exists(sample_path):
-            data_file = sample_path
+        raise FileNotFoundError("Simulation Error: No .DATA model provided or scenario resolution failed.")
             
     run_simulation(data_file, output_dir, refine=args.refine, compare=args.compare, ref_dir=ref_dir, num_steps=args.steps)
+

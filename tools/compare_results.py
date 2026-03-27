@@ -95,17 +95,23 @@ def load_summary(directory: str) -> dict:
         days = np.array([])
     vectors["TIME"] = days
 
-    # Derive cumulative FOPT by integrating FOPR over time
+    # Derive cumulative FOPT by integrating FOPR over time (Rectangle/Step Rule)
     if "FOPT" not in vectors and "FOPR" in vectors and len(days) > 1:
         fopr = vectors["FOPR"]
-        vectors["FOPT"] = np.array([np.trapezoid(fopr[:i+1], days[:i+1]) for i in range(len(days))])
+        fopt = np.zeros_like(days)
+        # Simulator integration standard: Q_total(t) = Q_total(t-dt) + Rate(t) * dt
+        fopt[1:] = np.cumsum(fopr[1:] * np.diff(days))
+        vectors["FOPT"] = fopt
 
-    # Derive cumulative FGPT from FGOR * FOPR
+    # Derive cumulative FGPT from FGOR * FOPR or manual integration of FGPR
     if "FGPR" not in vectors and "FGOR" in vectors and "FOPR" in vectors:
         vectors["FGPR"] = vectors["FOPR"] * vectors["FGOR"]
     if "FGPT" not in vectors and "FGPR" in vectors and len(days) > 1:
         fgpr = vectors["FGPR"]
-        vectors["FGPT"] = np.array([np.trapezoid(fgpr[:i+1], days[:i+1]) for i in range(len(days))])
+        fgpt = np.zeros_like(days)
+        fgpt[1:] = np.cumsum(fgpr[1:] * np.diff(days))
+        vectors["FGPT"] = fgpt
+
 
     # Start date extraction
     try:
@@ -399,16 +405,32 @@ def figure4_divergence(opm: dict, py: dict, out_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Compare OPM Flow and Python Reservoir Simulator results.")
-    parser.add_argument("--opm-dir", default="comparison/opm_run/",
-                        help="Directory containing OPM Flow output files (.SMSPEC, .UNRST, .EGRID)")
-    parser.add_argument("--py-dir", default="comparison/results/",
-                        help="Directory containing Python simulator output files (.SMSPEC, .UNRST, .EGRID)")
-    parser.add_argument("--output-dir", default="comparison/figures_auto/",
-                        help="Directory to save generated figures")
+    # Scenario Auto-discovery setup
+    parser.add_argument(
+        "--scenario",
+        default=None,
+        help="Scenario name (e.g., spe1) for automatic directory resolution"
+    )
+
+    parser.add_argument(
+        "--opm-dir",
+        default="tests/ref/",
+        help="Directory containing OPM reference summary/restart files"
+    )
+
+    parser.add_argument(
+        "--py-dir",
+        default="tests/run/",
+        help="Directory containing Python simulator results"
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        default="tests/reports/",
+        help="Directory to save comparison figures"
+    )
     parser.add_argument("--layer", type=int, default=0,
                         help="Layer index (0-based) for grid snapshot figures")
-    parser.add_argument("--scenario", default=None,
-                        help="Scenario name to automatically resolve OPM, Python, and output directories")
     args = parser.parse_args()
 
     # Resolve Scenario Paths
