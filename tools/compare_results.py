@@ -59,7 +59,7 @@ def _find_case(directory: str) -> str:
     """Return the base path (no extension) of the .SMSPEC file in *directory*."""
     for f in os.listdir(directory):
         if f.upper().endswith(".SMSPEC"):
-            base = f[:-6]  # strip exactly the last 6 chars (.SMSPEC)
+            base = f[:f.upper().rfind(".SMSPEC")]
             return os.path.join(directory, base)
     raise FileNotFoundError(f"No .SMSPEC found in {directory}")
 
@@ -398,18 +398,35 @@ def figure4_divergence(opm: dict, py: dict, out_path: str):
 # ── main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="OPM vs Python Sim Comparison")
-    parser.add_argument("--opm-dir",    default="data/spe1/",
-                        help="Benchmark OPM results directory")
-    parser.add_argument("--py-dir",     default="output/spe1/",
-                        help="Python simulator results directory")
-    parser.add_argument("--output-dir", default="tools/output/",
+    parser = argparse.ArgumentParser(description="Compare OPM Flow and Python Reservoir Simulator results.")
+    parser.add_argument("--opm-dir", default="comparison/opm_run/",
+                        help="Directory containing OPM Flow output files (.SMSPEC, .UNRST, .EGRID)")
+    parser.add_argument("--py-dir", default="comparison/results/",
+                        help="Directory containing Python simulator output files (.SMSPEC, .UNRST, .EGRID)")
+    parser.add_argument("--output-dir", default="comparison/figures_auto/",
                         help="Directory to save generated figures")
-    parser.add_argument("--layer",      type=int, default=0,
-                        help="Grid layer (0-indexed) for spatial snapshot")
+    parser.add_argument("--layer", type=int, default=0,
+                        help="Layer index (0-based) for grid snapshot figures")
+    parser.add_argument("--scenario", default=None,
+                        help="Scenario name to automatically resolve OPM, Python, and output directories")
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    # Resolve Scenario Paths
+    opm_dir = args.opm_dir
+    py_dir = args.py_dir
+    output_dir = args.output_dir
+    
+    if args.scenario:
+        scenario = args.scenario.lower()
+        print(f"Scenario-Based Comparison Mode: '{scenario}'")
+        opm_dir = f"tests/ref/{scenario}/"
+        py_dir = f"tests/run/{scenario}/"
+        output_dir = f"tests/reports/{scenario}/figures/"
+        print(f"  → OPM Dir: {opm_dir}")
+        print(f"  → Py Dir:  {py_dir}")
+        print(f"  → Reports: {output_dir}")
+
+    os.makedirs(output_dir, exist_ok=True)
 
     print("\n" + "="*60)
     print("  OPM Flow vs Python Reservoir Simulator — Comparison")
@@ -418,14 +435,14 @@ def main():
     # ── Load summary time-series ──────────────────────────────────
     print("\n[1/4]  Loading summary time-series...")
     try:
-        opm_sum = load_summary(args.opm_dir)
+        opm_sum = load_summary(opm_dir)
         print(f"       OPM: {len(opm_sum.get('TIME',[]))} time steps  |  "
               f"keys: {[k for k in opm_sum if k != 'TIME']}")
     except Exception as e:
         print(f"       ⚠  OPM summary load failed: {e}"); opm_sum = {}
 
     try:
-        py_sum = load_summary(args.py_dir)
+        py_sum = load_summary(py_dir)
         print(f"       Py : {len(py_sum.get('TIME',[]))} time steps  |  "
               f"keys: {[k for k in py_sum if k != 'TIME']}")
     except Exception as e:
@@ -434,14 +451,14 @@ def main():
     # ── Load grid restart data ────────────────────────────────────
     print("\n[2/4]  Loading restart grid data (final step)...")
     try:
-        opm_grid = load_grid_restart(args.opm_dir)
+        opm_grid = load_grid_restart(opm_dir)
         print(f"       OPM grid: {opm_grid['nx']}×{opm_grid['ny']}×{opm_grid['nz']}  |  "
               f"arrays: {[k for k in opm_grid if k not in ('nx','ny','nz')]}")
     except Exception as e:
         print(f"       ⚠  OPM grid load failed: {e}"); opm_grid = {}
 
     try:
-        py_grid = load_grid_restart(args.py_dir)
+        py_grid = load_grid_restart(py_dir)
         print(f"       Py  grid: {py_grid['nx']}×{py_grid['ny']}×{py_grid['nz']}  |  "
               f"arrays: {[k for k in py_grid if k not in ('nx','ny','nz')]}")
     except Exception as e:
@@ -451,19 +468,19 @@ def main():
     print("\n[3/4]  Generating figures...")
 
     figure1_time_series(opm_sum, py_sum,
-                        os.path.join(args.output_dir, "fig1_time_series.png"))
+                        os.path.join(output_dir, "fig1_time_series.png"))
 
     figure2_grid_snapshot(opm_grid, py_grid,
-                          os.path.join(args.output_dir, "fig2_grid_snapshot.png"),
+                          os.path.join(output_dir, "fig2_grid_snapshot.png"),
                           layer=args.layer)
 
     figure3_error_stats(opm_grid, py_grid,
-                        os.path.join(args.output_dir, "fig3_error_stats.png"))
+                        os.path.join(output_dir, "fig3_error_stats.png"))
 
     figure4_divergence(opm_sum, py_sum,
-                       os.path.join(args.output_dir, "fig4_divergence.png"))
+                       os.path.join(output_dir, "fig4_divergence.png"))
 
-    print(f"\n[4/4]  All figures saved to: {os.path.abspath(args.output_dir)}/")
+    print(f"\n[4/4]  All figures saved to: {os.path.abspath(output_dir)}/")
     print("="*60 + "\n")
 
 

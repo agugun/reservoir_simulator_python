@@ -154,12 +154,16 @@ class Simulator:
         bg, mu_g = self.model.fluid.get_gas_props(p)
         bg_old, _ = self.model.fluid.get_gas_props(p_old)
         
-        if hasattr(self.model.rock, 'sgof') and self.model.rock.sgof is not None:
-            krg = jnp.interp(sg, jnp.array(self.model.rock.sgof['sg']), jnp.array(self.model.rock.sgof['krg']))
-            kro = jnp.interp(sg, jnp.array(self.model.rock.sgof['sg']), jnp.array(self.model.rock.sgof['krog']))
-        else:
-            kro = jnp.clip(so / (1.0 - sw_conn), 0.0, 1.0)**2
-            krg = jnp.clip(sg / (1.0 - sw_conn), 0.0, 1.0)**2
+        def get_kr_jax(sg_val):
+            if hasattr(self.model.rock, 'sgof') and self.model.rock.sgof is not None:
+                krg_val = jnp.interp(sg_val, jnp.array(self.model.rock.sgof['sg']), jnp.array(self.model.rock.sgof['krg']))
+                kro_val = jnp.interp(sg_val, jnp.array(self.model.rock.sgof['sg']), jnp.array(self.model.rock.sgof['krog']))
+            else:
+                kro_val = jnp.clip(so / (1.0 - sw_conn), 0.0, 1.0)**2
+                krg_val = jnp.clip(sg_val / (1.0 - sw_conn), 0.0, 1.0)**2
+            return kro_val, krg_val
+
+        kro, krg = get_kr_jax(sg)
         
         lam_o = kro / (mu_o * bo)
         lam_g = krg / (mu_g * bg)
@@ -200,6 +204,13 @@ class Simulator:
         gam_o_3d = (rho_o_res * grad_factor).reshape(grid.dimensions, order='F')
         gam_g_3d = (rho_g_res * grad_factor).reshape(grid.dimensions, order='F')
         
+        # 3D Variables for TVD reconstruction
+        sg_3d = sg.reshape(grid.dimensions, order='F')
+        mu_o_3d = mu_o.reshape(grid.dimensions, order='F')
+        bo_3d = bo.reshape(grid.dimensions, order='F')
+        mu_g_3d = mu_g.reshape(grid.dimensions, order='F')
+        bg_3d = bg.reshape(grid.dimensions, order='F')
+        
         flow_o = jnp.zeros(grid.dimensions)
         flow_g = jnp.zeros(grid.dimensions)
         
@@ -230,8 +241,20 @@ class Simulator:
                 b = v_down - v_up
                 return v_up + 0.5 * van_leer(a, b)
 
-            lo_face = get_tvd(lam_o_3d, up_o)
-            lg_face = get_tvd(lam_g_3d, up_g)
+            # Saturation TVD (Phase-Specific Upwinding)
+            sg_face_g = get_tvd(sg_3d, up_g) 
+            sg_face_o = get_tvd(sg_3d, up_o)
+            _, krg_face = get_kr_jax(sg_face_g)
+            kro_face, _ = get_kr_jax(sg_face_o)
+            
+            # Use First-Order Upwind for PVT to ensure stability (Industrial Standard)
+            mu_o_face = jnp.where(up_o, mu_o_3d[:-1,:,:], mu_o_3d[1:,:,:])
+            bo_face = jnp.where(up_o, bo_3d[:-1,:,:], bo_3d[1:,:,:])
+            mu_g_face = jnp.where(up_g, mu_g_3d[:-1,:,:], mu_g_3d[1:,:,:])
+            bg_face = jnp.where(up_g, bg_3d[:-1,:,:], bg_3d[1:,:,:])
+            
+            lo_face = kro_face / (mu_o_face * bo_face)
+            lg_face = krg_face / (mu_g_face * bg_face)
             rs_face = get_tvd(rs_3d, up_o)
             
             flux_o = Tx * lo_face * dPhi_o_x
@@ -257,8 +280,18 @@ class Simulator:
                 v_ups = jnp.where(up_mask, v_ups_p, v_ups_m)
                 return v_up + 0.5 * van_leer(v_up - v_ups, v_down - v_up)
 
-            lo_face = get_tvd_y(lam_o_3d, up_o)
-            lg_face = get_tvd_y(lam_g_3d, up_g)
+            sg_face_g = get_tvd_y(sg_3d, up_g)
+            sg_face_o = get_tvd_y(sg_3d, up_o)
+            _, krg_face = get_kr_jax(sg_face_g)
+            kro_face, _ = get_kr_jax(sg_face_o)
+            
+            mu_o_face = jnp.where(up_o, mu_o_3d[:,:-1,:], mu_o_3d[:,1:,:])
+            bo_face = jnp.where(up_o, bo_3d[:,:-1,:], bo_3d[:,1:,:])
+            mu_g_face = jnp.where(up_g, mu_g_3d[:,:-1,:], mu_g_3d[:,1:,:])
+            bg_face = jnp.where(up_g, bg_3d[:,:-1,:], bg_3d[:,1:,:])
+            
+            lo_face = kro_face / (mu_o_face * bo_face)
+            lg_face = krg_face / (mu_g_face * bg_face)
             rs_face = get_tvd_y(rs_3d, up_o)
             
             flux_o = Ty * lo_face * dPhi_o_y
@@ -284,8 +317,18 @@ class Simulator:
                 v_ups = jnp.where(up_mask, v_ups_p, v_ups_m)
                 return v_up + 0.5 * van_leer(v_up - v_ups, v_down - v_up)
 
-            lo_face = get_tvd_z(lam_o_3d, up_o)
-            lg_face = get_tvd_z(lam_g_3d, up_g)
+            sg_face_g = get_tvd_z(sg_3d, up_g)
+            sg_face_o = get_tvd_z(sg_3d, up_o)
+            _, krg_face = get_kr_jax(sg_face_g)
+            kro_face, _ = get_kr_jax(sg_face_o)
+            
+            mu_o_face = jnp.where(up_o, mu_o_3d[:,:,:-1], mu_o_3d[:,:,1:])
+            bo_face = jnp.where(up_o, bo_3d[:,:,:-1], bo_3d[:,:,1:])
+            mu_g_face = jnp.where(up_g, mu_g_3d[:,:,:-1], mu_g_3d[:,:,1:])
+            bg_face = jnp.where(up_g, bg_3d[:,:,:-1], bg_3d[:,:,1:])
+            
+            lo_face = kro_face / (mu_o_face * bo_face)
+            lg_face = krg_face / (mu_g_face * bg_face)
             rs_face = get_tvd_z(rs_3d, up_o)
             
             flux_o = Tz * lo_face * dPhi_o_z

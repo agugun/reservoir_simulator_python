@@ -4,6 +4,7 @@ from src.core import Simulator, Grid, Rock, Fluid, ReservoirModel, Well
 from src.io import EclipseParser
 from src.io.report_writer import OPMReportWriter
 import sys
+import jax
 
 def calculate_snapshot(model, sim, well_totals, step_dt_accum):
     well_data = {}
@@ -120,7 +121,7 @@ def calculate_snapshot(model, sim, well_totals, step_dt_accum):
 
     return well_data, field_rates, cum_totals
 
-def run_simulation(data_file: str = None, output_dir: str = None, refine: bool = False, compare: bool = False, ref_dir: str = None):
+def run_simulation(data_file: str = None, output_dir: str = None, refine: bool = False, compare: bool = False, ref_dir: str = None, num_steps: int = 120):
     """
     Main entry point for the reservoir simulation.
     Can load from an Eclipse .DATA file or use a hardcoded model.
@@ -226,18 +227,26 @@ def run_simulation(data_file: str = None, output_dir: str = None, refine: bool =
     # Simulation Parameters
     well_totals = {w.name: {'oil': 0.0, 'gas': 0.0} for w in model.wells}
     
-    print(f"\nStarting Final Parity Simulation (Adaptive 120 target steps):")
+    print(f"\nStarting Final Parity Simulation (Adaptive {num_steps} target steps):")
     
     all_summary_results = []
     
     # Monthly intervals for SPE1 (integer days to match ResInsight expectations)
     month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     target_times = []
+    
+    # Calculate steps per month based on num_steps
+    # Total nominal steps is 120 (10 years * 12 months)
+    steps_per_month = max(1, num_steps // 120)
+    
     current_cum = 0.0
     for year in range(10):
         for days in month_days:
+            # Sub-divide each month into steps_per_month segments
+            for k in range(1, steps_per_month + 1):
+                sub_step_time = current_cum + (days * k / steps_per_month)
+                target_times.append(float(sub_step_time))
             current_cum += days
-            target_times.append(float(current_cum))
             
     report_step = 1
     
@@ -293,7 +302,7 @@ def run_simulation(data_file: str = None, output_dir: str = None, refine: bool =
         all_summary_results.append(vals)
         
         if opm_reporter:
-            opm_reporter.log_report_matrices(report_step, 120, total_time, target, date_str, field_rates, well_data, cum_totals)
+            opm_reporter.log_report_matrices(report_step, len(target_times), total_time, target, date_str, field_rates, well_data, cum_totals)
         
         if report_step == 4 or report_step % 20 == 0:
             print(f"--- Step {report_step} (Month {report_step if report_step < 4 else report_step - 3}) ---")
@@ -341,6 +350,19 @@ if __name__ == "__main__":
     )
     
     parser.add_argument(
+        "--scenario",
+        default=None,
+        help="Scenario name (e.g., spe1) to automatically resolve data, output, and ref paths"
+    )
+    
+    parser.add_argument(
+        "--device",
+        choices=["cpu", "cuda", "gpu"],
+        default="cpu",
+        help="JAX execution device (cpu, cuda, or gpu)"
+    )
+    
+    parser.add_argument(
         "-o", "--output-dir",
         default=None,
         help="Directory to save the simulation outputs"
@@ -364,15 +386,53 @@ if __name__ == "__main__":
         help="Reference OPM directory for comparison"
     )
     
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=120,
+        help="Target number of simulation steps (default 120 for 10 years monthly)"
+    )
+    
     args = parser.parse_args()
     
-    # Priority: 1. Command-line argument, 2. Default sample file
+    # Configure JAX Device
+    if args.device:
+        device_name = "gpu" if args.device == "cuda" else args.device
+        jax.config.update("jax_platform_name", device_name)
+        print(f"JAX configured for hardware acceleration on: {device_name.upper()}")
+    
+    # Resolve Scenario Paths
     data_file = args.input_file
     output_dir = args.output_dir
+    ref_dir = args.ref_dir
     
+    if args.scenario:
+        scenario = args.scenario.lower()
+        print(f"Scenario-Based Execution Mode: '{scenario}'")
+        
+        # 1. Resolve Data File
+        data_dir = "data/sample/"
+        found_data = False
+        if os.path.exists(data_dir):
+            for f in os.listdir(data_dir):
+                if scenario in f.lower() and f.endswith(".DATA"):
+                    data_file = os.path.join(data_dir, f)
+                    found_data = True
+                    break
+        
+        if not found_data:
+            print(f"  ⚠  Could not find matching .DATA file for scenario '{scenario}' in {data_dir}")
+            
+        # 2. Resolve Paths
+        output_dir = f"tests/run/{scenario}/"
+        ref_dir = f"tests/ref/{scenario}/"
+        print(f"  → Output: {output_dir}")
+        print(f"  → Reference: {ref_dir}")
+        
+    # Priority: 1. Command-line argument, 2. Scenario Resolution, 3. Default sample file
     if not data_file:
-        sample_path = "data/sample/sample_model.DATA"
+        sample_path = "data/sample/SPE1CASE1.DATA"
         if os.path.exists(sample_path):
             data_file = sample_path
             
-    run_simulation(data_file, output_dir, refine=args.refine, compare=args.compare, ref_dir=args.ref_dir)
+    run_simulation(data_file, output_dir, refine=args.refine, compare=args.compare, ref_dir=ref_dir, num_steps=args.steps)
