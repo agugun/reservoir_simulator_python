@@ -9,7 +9,9 @@ class PVDGTable:
         self.mu = jnp.array(data[2::3])
         
     def evaluate(self, p):
-        bg = jnp.interp(p, self.p, self.bg)
+        # Linearly interpolate Expansion Factor Eg = 1/Bg which is more linear with P
+        eg = jnp.interp(p, self.p, 1.0 / jnp.maximum(self.bg, 1e-12))
+        bg = 1.0 / jnp.maximum(eg, 1e-12)
         mu = jnp.interp(p, self.p, self.mu)
         return bg, mu
 
@@ -55,11 +57,13 @@ class PVTOTable:
         slope_bo_rs = jnp.interp(rs, self.rs_arr, self.slopes_bo)
         slope_mu_rs = jnp.interp(rs, self.rs_arr, self.slopes_mu)
         
-        # Undersaturated correction
+        # Undersaturated correction (Exponential/Log-linear matching OPM)
         dp_under = jnp.maximum(0.0, p - pbub)
         
-        bo = bo_bub + slope_bo_rs * dp_under
-        mu = mu_bub + slope_mu_rs * dp_under
+        # bo = bo_bub * exp(c_o * dp_under) where c_o = slope / bo_bub
+        # For small x, exp(x) ~ 1 + x, matching linear if needed, but more accurate for large dp
+        bo = bo_bub * jnp.exp((slope_bo_rs / jnp.maximum(bo_bub, 1e-12)) * dp_under)
+        mu = mu_bub * jnp.exp((slope_mu_rs / jnp.maximum(mu_bub, 1e-12)) * dp_under)
         
         return bo, mu
 

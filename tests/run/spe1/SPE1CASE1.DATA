@@ -285,7 +285,8 @@ SUMMARY
 
 -- 1a) Oil rate vs time
 FOPR
--- Field Oil Production Rate
+FOPT
+-- Field Oil Production Rate and Total
 
 -- 1b) GOR vs time
 WGOR
@@ -294,6 +295,14 @@ WGOR
 /
 -- Using FGOR instead of WGOR:PROD results in the same graph
 FGOR
+FGPT
+-- Field Gas Production Total
+
+-- Well Totals
+WOPT
+WGPT
+   'PROD'
+/
 
 -- 2a) Pressures of the cell where the injector and producer are located
 BPR
